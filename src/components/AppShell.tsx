@@ -8,6 +8,8 @@ import { SearchOverlay } from './SearchOverlay'
 import { FilterMenu, type FilterState } from './FilterMenu'
 import { useAuth } from '../hooks/useAuth'
 import { useChores } from '../hooks/useChores'
+import { usePwa } from '../hooks/usePwa'
+import { notificationPermission, enablePushNotifications } from '../lib/push'
 import type { Chore } from '../types/models'
 
 function ProfileAvatar({
@@ -58,6 +60,24 @@ export function AppShell() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [activeFilter, setActiveFilter] = useState<FilterState | null>(null)
   const [activeDate, setActiveDate] = useState<Date | null>(null)
+
+  const { installPrompt, promptInstall } = usePwa()
+  const [pushPerm, setPushPerm] = useState(notificationPermission())
+  const [pushBusy, setPushBusy] = useState(false)
+  const showPushPrompt = pushPerm === 'default'
+
+  async function handleEnablePush() {
+    if (!user) return
+    setPushBusy(true)
+    try {
+      await enablePushNotifications(user.uid)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setPushPerm(notificationPermission())
+      setPushBusy(false)
+    }
+  }
   
   type ViewMode = 'agenda' | 'month' | 'week'
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -291,6 +311,50 @@ export function AppShell() {
           )}
         </div>
       </header>
+
+      {(installPrompt || showPushPrompt) && onHome && (
+        <div className="mb-6 rounded-[var(--radius-modal)] border border-[var(--hairline)] bg-[var(--surface)] p-4 shadow-sm">
+          {installPrompt ? (
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--ink)]">Install ZeoTask</h3>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">Add to your home screen for the best experience.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void promptInstall()}
+                className="focus-ring whitespace-nowrap rounded-[var(--radius-control)] bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white"
+              >
+                Install app
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--ink)]">Get notified</h3>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">Enable due date reminders and morning digests.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPushPerm('denied')}
+                  className="focus-ring whitespace-nowrap rounded-[var(--radius-control)] px-3 py-1.5 text-xs font-medium text-[var(--muted)] hover:bg-[var(--quiet)]"
+                >
+                  Skip
+                </button>
+                <button
+                  type="button"
+                  disabled={pushBusy}
+                  onClick={() => void handleEnablePush()}
+                  className="focus-ring whitespace-nowrap rounded-[var(--radius-control)] bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  Enable
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <main className="flex-1">
         <Outlet context={{ openEdit, openCreate, activeFilter, viewMode, setActiveDate }} />

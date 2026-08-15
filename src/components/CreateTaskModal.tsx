@@ -101,7 +101,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
   const reset = useCallback(() => {
     setRawTitle(initialTitle || '')
     setIgnoredTokens(initialOverrides?.ignoredTokens || [])
-    setParsed(parseSmartTitle(initialTitle || '', initialOverrides?.ignoredTokens || []))
+    setParsed(parseSmartTitle(initialTitle || '', (initialOverrides?.ignoredTokens || []).map(t => t.text)))
     setDueOverride(undefined)
     setFreqOverride(undefined)
     setPrioOverride(undefined)

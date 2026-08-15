@@ -58,8 +58,6 @@ export function EntityManageModal({
     }
   }
 
-  const isPresetColor = PROJECT_COLORS.includes(color)
-
   const modal = (
     <div
       className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"

@@ -4,6 +4,7 @@ import { ChoreRow } from '../components/ChoreRow'
 import { ChevronDown, Plus } from '../components/icons'
 import { useChores } from '../hooks/useChores'
 import { useLabels } from '../hooks/useLabels'
+import { useProjects } from '../hooks/useProjects'
 import { CalendarView } from '../components/CalendarView'
 import { bucketOrder, bucketTitle, groupChores } from '../lib/scheduler'
 import type { Chore, ChoreBucket, Label } from '../types/models'
@@ -14,6 +15,7 @@ type ShellContext = {
   openEdit: (chore: Chore) => void
   openCreate: (initialDue?: Date) => void
   activeFilter: FilterState | null
+  activeProjectId: string | null
   viewMode: 'agenda' | 'month' | 'week'
   setActiveDate: (date: Date | null) => void
 }
@@ -21,20 +23,21 @@ type ShellContext = {
 export function ChoresPage() {
   const { chores, ready, error, pendingIds, completeTask, moveOverdueToToday, updateTask } =
     useChores()
-  const { byId } = useLabels()
-  const { openEdit, openCreate, activeFilter, viewMode, setActiveDate } = useOutletContext<ShellContext>()
+  const { byId, labels } = useLabels()
+  const { projects } = useProjects()
+  const { openEdit, openCreate, activeFilter, activeProjectId, viewMode, setActiveDate } = useOutletContext<ShellContext>()
   const [collapsed, setCollapsed] = useState<Partial<Record<ChoreBucket, boolean>>>({})
   const [exiting, setExiting] = useState<Set<string>>(() => new Set())
   const [completing, setCompleting] = useState<Set<string>>(() => new Set())
   
   const filteredChores = useMemo(() => {
-    if (!activeFilter) return chores
     return chores.filter((c) => {
-      const matchPriority = activeFilter.priorities.length === 0 || activeFilter.priorities.includes(c.priority)
-      const matchLabel = activeFilter.labelIds.length === 0 || activeFilter.labelIds.some(id => c.labelIds.includes(id))
-      return matchPriority && matchLabel
+      const matchProject = !activeProjectId || c.projectId === activeProjectId
+      const matchPriority = !activeFilter || activeFilter.priorities.length === 0 || activeFilter.priorities.includes(c.priority)
+      const matchLabel = !activeFilter || activeFilter.labelIds.length === 0 || activeFilter.labelIds.some(id => c.labelIds.includes(id))
+      return matchProject && matchPriority && matchLabel
     })
-  }, [chores, activeFilter])
+  }, [chores, activeFilter, activeProjectId])
 
   const groups = useMemo(() => groupChores(filteredChores), [filteredChores])
 
@@ -204,9 +207,10 @@ export function ChoresPage() {
                         chore={chore}
                         labels={
                           chore.labelIds
-                            .map((id) => byId.get(id))
+                            .map((id) => labels.find((l) => l.id === id)!)
                             .filter(Boolean) as Label[]
                         }
+                        project={chore.projectId ? projects.find((p) => p.id === chore.projectId) || null : null}
                         pending={pendingIds.has(chore.id)}
                         exiting={exiting.has(chore.id)}
                         completing={completing.has(chore.id)}

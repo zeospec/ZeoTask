@@ -10,9 +10,9 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { getDb } from './firebase'
-import type { Label } from '../types/models'
+import type { Project } from '../types/models'
 
-const LABEL_COLORS = [
+export const PROJECT_COLORS = [
   '#315F55',
   '#6B7D91',
   '#A85B00',
@@ -21,62 +21,69 @@ const LABEL_COLORS = [
   '#4A6670',
 ]
 
-function labelsCol(uid: string) {
-  return collection(getDb(), 'users', uid, 'labels')
+function projectsCol(uid: string) {
+  return collection(getDb(), 'users', uid, 'projects')
 }
 
 function nowIso() {
   return new Date().toISOString()
 }
 
-export function subscribeLabels(
+export function subscribeProjects(
   uid: string,
-  onData: (labels: Label[]) => void,
+  onData: (projects: Project[]) => void,
   onError?: (error: Error) => void,
 ): Unsubscribe {
-  const q = query(labelsCol(uid), orderBy('name', 'asc'))
+  const q = query(projectsCol(uid), orderBy('name', 'asc'))
   return onSnapshot(
     q,
     (snap) => {
-      onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Label))
+      onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Project))
     },
     (err) => onError?.(err),
   )
 }
 
-export function createLabel(
+export function createProject(
   uid: string,
   name: string,
   color?: string,
 ): { id: string; promise: Promise<void> } {
   const stamp = nowIso()
-  const ref = doc(labelsCol(uid))
-  const payload: Omit<Label, 'id'> = {
+  const ref = doc(projectsCol(uid))
+  const payload: Omit<Project, 'id'> = {
     name: name.trim().replace(/^#/, ''),
-    color: color ?? LABEL_COLORS[Math.floor(Math.random() * LABEL_COLORS.length)],
+    color: color ?? PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)],
     createdAt: stamp,
     updatedAt: stamp,
   }
   return { id: ref.id, promise: setDoc(ref, payload) }
 }
 
-export function updateLabel(uid: string, id: string, updates: { name?: string }): Promise<void> {
+export function updateProject(
+  uid: string,
+  id: string,
+  updates: { name?: string; color?: string },
+): Promise<void> {
   const payload: any = { updatedAt: nowIso() }
   if (updates.name !== undefined) {
     payload.name = updates.name.trim().replace(/^#/, '')
   }
-  return updateDoc(doc(labelsCol(uid), id), payload)
+  if (updates.color !== undefined) {
+    payload.color = updates.color
+  }
+  return updateDoc(doc(projectsCol(uid), id), payload)
 }
 
-export function deleteLabel(uid: string, id: string): Promise<void> {
-  return deleteDoc(doc(labelsCol(uid), id))
+export function deleteProject(uid: string, id: string): Promise<void> {
+  return deleteDoc(doc(projectsCol(uid), id))
 }
 
-/** Resolve names to ids; create missing labels. Returns labelIds. */
-export async function ensureLabelIds(
+/** Resolve names to ids; create missing projects. Returns projectIds. */
+export async function ensureProjectIds(
   uid: string,
   names: string[],
-  existing: Label[],
+  existing: Project[],
 ): Promise<string[]> {
   const ids: string[] = []
   const lower = (s: string) => s.trim().replace(/^#/, '').toLowerCase()
@@ -88,13 +95,13 @@ export async function ensureLabelIds(
       ids.push(found.id)
       continue
     }
-    const { id, promise } = createLabel(uid, name)
+    const { id, promise } = createProject(uid, name)
     await promise
     ids.push(id)
     existing.push({
       id,
       name,
-      color: LABEL_COLORS[0],
+      color: PROJECT_COLORS[0],
       createdAt: nowIso(),
       updatedAt: nowIso(),
     })

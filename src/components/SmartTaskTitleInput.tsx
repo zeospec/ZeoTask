@@ -12,6 +12,10 @@ type Props = {
   placeholder?: string
   autoFocus?: boolean
   ignoredTokens?: string[]
+  /** Called when user types '@' — parent should show inline project autocomplete */
+  onAtTrigger?: (active: boolean, query: string) => void
+  /** Called when user types '#' — parent should show inline label autocomplete */
+  onHashTrigger?: (active: boolean, query: string) => void
 }
 
 /**
@@ -23,9 +27,11 @@ export function SmartTaskTitleInput({
   onChange,
   onParsed,
   onSubmit,
-  placeholder = 'What needs doing? Try “tomorrow 10am #work P1”',
+  placeholder = 'What needs doing? Try "tomorrow 10am #work P1"',
   autoFocus = true,
   ignoredTokens = [],
+  onAtTrigger,
+  onHashTrigger,
 }: Props) {
   const inputId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -43,6 +49,33 @@ export function SmartTaskTitleInput({
     return () => window.clearTimeout(t)
   }, [autoFocus])
 
+  function handleChange(newVal: string) {
+    onChange(newVal)
+
+    // Check for @ trigger — find the last @ in the string
+    const atIdx = newVal.lastIndexOf('@')
+    if (atIdx !== -1) {
+      const afterAt = newVal.slice(atIdx + 1)
+      if (!/\s/.test(afterAt)) {
+        onAtTrigger?.(true, afterAt)
+        onHashTrigger?.(false, '')
+        return
+      }
+    }
+    onAtTrigger?.(false, '')
+
+    // Check for # trigger — find the last # in the string
+    const hashIdx = newVal.lastIndexOf('#')
+    if (hashIdx !== -1) {
+      const afterHash = newVal.slice(hashIdx + 1)
+      if (!/\s/.test(afterHash)) {
+        onHashTrigger?.(true, afterHash)
+        return
+      }
+    }
+    onHashTrigger?.(false, '')
+  }
+
   return (
     <input
       ref={inputRef}
@@ -55,7 +88,7 @@ export function SmartTaskTitleInput({
       autoComplete="off"
       spellCheck={false}
       placeholder={placeholder}
-      onChange={(e) => onChange(e.target.value.replace(/[\r\n]/g, ' '))}
+      onChange={(e) => handleChange(e.target.value.replace(/[\r\n]/g, ' '))}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault()

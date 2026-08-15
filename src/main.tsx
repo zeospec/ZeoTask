@@ -6,6 +6,7 @@ import { ChoresProvider } from './hooks/useChores'
 import { LabelsProvider } from './hooks/useLabels'
 import { ViewsProvider } from './hooks/useViews'
 import { PwaProvider } from './hooks/usePwa'
+import { ProjectsProvider } from './hooks/useProjects'
 import App from './App'
 import './index.css'
 
@@ -17,7 +18,9 @@ createRoot(document.getElementById('root')!).render(
           <ChoresProvider>
             <LabelsProvider>
               <ViewsProvider>
-                <App />
+                <ProjectsProvider>
+                  <App />
+                </ProjectsProvider>
               </ViewsProvider>
             </LabelsProvider>
           </ChoresProvider>

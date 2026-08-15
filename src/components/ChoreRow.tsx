@@ -6,6 +6,7 @@ import { Check } from './icons'
 type Props = {
   chore: Chore
   labels: Label[]
+  project?: { id: string; name: string; color: string } | null
   pending?: boolean
   exiting?: boolean
   completing?: boolean
@@ -17,6 +18,7 @@ type Props = {
 export function ChoreRow({
   chore,
   labels,
+  project,
   pending,
   exiting,
   completing,
@@ -73,6 +75,12 @@ export function ChoreRow({
               +{extra}
             </span>
           )}
+          {project && (
+            <span className="flex items-center gap-1 font-mono-meta text-[11px] leading-[18px] text-[var(--ink)]">
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: project.color }} />
+              {project.name}
+            </span>
+          )}
           {chore.priority > 0 && (
             <span className="font-mono-meta text-[11px] text-[var(--due-soon)]">
               {priorityLabel(chore.priority)}
@@ -88,10 +96,15 @@ export function ChoreRow({
             </span>
           )}
           {chore.subtasks.length > 0 && (
-            <span className="font-mono-meta text-[11px] text-[var(--muted)]">
-              {chore.subtasks.filter((s) => s.completed).length}/
-              {chore.subtasks.length}
-            </span>
+            <div className="flex items-center gap-1.5 ml-1">
+              <svg className="text-[var(--muted)]" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+              <div className="h-1 w-12 overflow-hidden rounded-full bg-[var(--hairline)]">
+                <div 
+                  className="h-full bg-[var(--accent)] transition-all duration-500 ease-out"
+                  style={{ width: `${(chore.subtasks.filter(s => s.completed).length / chore.subtasks.length) * 100}%` }}
+                />
+              </div>
+            </div>
           )}
         </div>
       </button>

@@ -1,16 +1,17 @@
 import { useState, useMemo, useEffect } from 'react'
 import {
   DndContext,
-  closestCenter,
+  pointerWithin,
   KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
   useDroppable,
-  useDraggable
+  useDraggable,
+  DragOverlay
 } from '@dnd-kit/core'
-import type { DragEndEvent } from '@dnd-kit/core'
-import { CSS } from '@dnd-kit/utilities'
+import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core'
+
 import {
   startOfMonth,
   endOfMonth,
@@ -46,10 +47,10 @@ type Props = {
 }
 
 function DraggableChore({ id, children }: { id: string; children: React.ReactNode }) {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({ id })
-  const style = transform
-    ? { transform: CSS.Translate.toString(transform), zIndex: 50 }
-    : undefined
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id })
+  const style = {
+    opacity: isDragging ? 0.5 : 1,
+  }
 
   return (
     <div ref={setNodeRef} style={style} {...listeners} {...attributes} className="touch-manipulation">
@@ -127,6 +128,7 @@ export function CalendarView({
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(new Date()))
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [activeTab, setActiveTab] = useState<'scheduled' | 'unscheduled'>('scheduled')
+  const [activeDragId, setActiveDragId] = useState<string | null>(null)
 
   useEffect(() => {
     onActiveDateChange(activeTab === 'scheduled' ? selectedDate : null)
@@ -180,7 +182,12 @@ export function CalendarView({
     useSensor(KeyboardSensor)
   )
 
+  function handleDragStart(event: DragStartEvent) {
+    setActiveDragId(event.active.id as string)
+  }
+
   function handleDragEnd(event: DragEndEvent) {
+    setActiveDragId(null)
     const { active, over } = event
     
     if (!over) return
@@ -203,8 +210,13 @@ export function CalendarView({
     }
   }
 
+  const activeDragChore = useMemo(() => {
+    if (!activeDragId) return null
+    return chores.find(c => c.id === activeDragId) || null
+  }, [activeDragId, chores])
+
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+    <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="flex flex-col h-full pb-6">
         <div className="section-block p-4 flex flex-col items-center shadow-[var(--shadow-card)] z-10 sticky top-0 bg-[var(--surface)]">
         {/* Header */}
@@ -348,6 +360,21 @@ export function CalendarView({
         </div>
       </div>
     </div>
+    <DragOverlay>
+        {activeDragChore ? (
+          <div className="opacity-90 shadow-2xl scale-105 cursor-grabbing bg-[var(--surface)] rounded-[var(--radius-card)] pointer-events-none rotate-2">
+            <ChoreRow
+              chore={activeDragChore}
+              labels={activeDragChore.labelIds.map(id => labelsById.get(id)).filter(Boolean) as Label[]}
+              pending={false}
+              exiting={false}
+              completing={false}
+              onOpen={() => {}}
+              onComplete={() => {}}
+            />
+          </div>
+        ) : null}
+      </DragOverlay>
     </DndContext>
   )
 }

@@ -10,7 +10,7 @@ import {
 import {
   createLabel,
   deleteLabel,
-  renameLabel,
+  updateLabel,
   subscribeLabels,
 } from '../lib/labels'
 import type { Label } from '../types/models'
@@ -21,7 +21,7 @@ type LabelsContextValue = {
   ready: boolean
   byId: Map<string, Label>
   create: (name: string) => Promise<string>
-  rename: (id: string, name: string) => Promise<void>
+  update: (id: string, updates: { name?: string }) => Promise<void>
   remove: (id: string) => Promise<void>
 }
 
@@ -60,10 +60,10 @@ export function LabelsProvider({ children }: { children: ReactNode }) {
     [user],
   )
 
-  const rename = useCallback(
-    async (id: string, name: string) => {
+  const update = useCallback(
+    async (id: string, updates: { name?: string }) => {
       if (!user) return
-      await renameLabel(user.uid, id, name)
+      await updateLabel(user.uid, id, updates)
     },
     [user],
   )
@@ -77,8 +77,8 @@ export function LabelsProvider({ children }: { children: ReactNode }) {
   )
 
   const value = useMemo(
-    () => ({ labels, ready, byId, create, rename, remove }),
-    [byId, create, labels, ready, remove, rename],
+    () => ({ labels, ready, byId, create, update, remove }),
+    [byId, create, labels, ready, remove, update],
   )
 
   return (

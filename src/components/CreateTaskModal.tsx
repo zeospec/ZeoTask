@@ -7,6 +7,7 @@ import { SmartTaskTitleInput } from './SmartTaskTitleInput'
 import { useAuth } from '../hooks/useAuth'
 import { useChores } from '../hooks/useChores'
 import { useLabels } from '../hooks/useLabels'
+import { useProjects } from '../hooks/useProjects'
 import { ensureLabelIds } from '../lib/labels'
 import {
   formatPreviewDue,
@@ -23,6 +24,7 @@ type Props = {
   open: boolean
   editing: Chore | null
   initialDue?: Date
+  activeProjectId?: string | null
   onClose: () => void
   onSaved: () => void
   onDeleted?: () => void
@@ -54,20 +56,22 @@ const WEEKDAYS = [
   { d: 6, label: 'S' },
 ]
 
-export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, onDeleted }: Props) {
+export function CreateTaskModal({ open, editing, initialDue, activeProjectId, onClose, onSaved, onDeleted }: Props) {
   const { user } = useAuth()
   const { createTask, updateTask, deleteTask } = useChores()
   const { labels } = useLabels()
+  const { projects, create: createProject } = useProjects()
   const panelRef = useRef<HTMLDivElement>(null)
   const subInputRef = useRef<HTMLInputElement>(null)
   const [rawTitle, setRawTitle] = useState('')
   const [parsed, setParsed] = useState<SmartParseResult>(() => parseSmartTitle(''))
-  const [ignoredTokens, setIgnoredTokens] = useState<string[]>([])
+  const [ignoredTokens, setIgnoredTokens] = useState<{text: string; kind: string}[]>([])
   const [dueOverride, setDueOverride] = useState<Date | null | undefined>(undefined)
   const [freqOverride, setFreqOverride] = useState<Frequency | undefined>(undefined)
   const [prioOverride, setPrioOverride] = useState<Priority | undefined>(undefined)
   const [repeatEvery, setRepeatEvery] = useState(1)
   const [repeatWeekdays, setRepeatWeekdays] = useState<number[]>([])
+  const [projectOverride, setProjectOverride] = useState<string | null | undefined>(undefined)
   /** Labels added via the Labels menu (not from live title NLP). */
   const [manualLabelNames, setManualLabelNames] = useState<string[]>([])
   /** NLP labels the user explicitly turned off in the Labels menu. */
@@ -79,7 +83,13 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
   const [repeatOpen, setRepeatOpen] = useState(false)
   const [priorityOpen, setPriorityOpen] = useState(false)
   const [labelsOpen, setLabelsOpen] = useState(false)
+  const [projectsOpen, setProjectsOpen] = useState(false)
   const [labelDraft, setLabelDraft] = useState('')
+  const [projectSearch, setProjectSearch] = useState('')
+  const [atMenuOpen, setAtMenuOpen] = useState(false)
+  const [atQuery, setAtQuery] = useState('')
+  const [hashMenuOpen, setHashMenuOpen] = useState(false)
+  const [hashQuery, setHashQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [focusNotes, setFocusNotes] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -89,10 +99,11 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
   const reset = useCallback(() => {
     setRawTitle('')
     setIgnoredTokens([])
-    setParsed(parseSmartTitle(''))
+    setParsed(parseSmartTitle('', []))
     setDueOverride(undefined)
     setFreqOverride(undefined)
     setPrioOverride(undefined)
+    setProjectOverride(undefined)
     setRepeatEvery(1)
     setRepeatWeekdays([])
     setManualLabelNames([])
@@ -116,10 +127,11 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
     if (editing) {
       setRawTitle(editing.title)
       setIgnoredTokens([])
-      setParsed(parseSmartTitle(editing.title))
+      setParsed(() => parseSmartTitle(editing.title, []))
       setDueOverride(undefined)
       setFreqOverride(undefined)
       setPrioOverride(undefined)
+      setProjectOverride(undefined)
       setRepeatEvery(editing.repeatEvery || 1)
       setRepeatWeekdays(editing.repeatWeekdays || [])
       setDescription(editing.description)
@@ -200,7 +212,9 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
     const excluded = new Set(excludedLabelNames.map((n) => n.toLowerCase()))
     for (const name of [
       ...manualLabelNames,
-      ...parsed.labelNames.filter((n) => !excluded.has(n.toLowerCase())),
+      ...parsed.labelNames.filter(
+        (n) => !excluded.has(n.toLowerCase()) && labels.some((l) => l.name.toLowerCase() === n.toLowerCase())
+      ),
     ]) {
       if (!out.some((n) => n.toLowerCase() === name.toLowerCase())) out.push(name)
     }
@@ -255,6 +269,24 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
     dueAt ?? new Date(),
   )
 
+  const hasNlpProject = parsed.highlights.some((h) => h.kind === 'project')
+  const nlpMatchedProject = hasNlpProject && parsed.projectName
+    ? projects.find((p) => p.name.toLowerCase() === parsed.projectName?.toLowerCase())
+    : null
+
+  const finalProjectId =
+    projectOverride !== undefined
+      ? projectOverride
+      : nlpMatchedProject
+        ? nlpMatchedProject.id
+        : editing
+          ? editing.projectId
+          : activeProjectId || null
+
+  const activeProjectName = finalProjectId
+    ? projects.find((p) => p.id === finalProjectId)?.name
+    : null
+
   function addSubtask() {
     const t = subDraft.trim()
     if (!t) return
@@ -268,9 +300,8 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
 
   async function submit() {
     if (!user) return
-    const latest = parseSmartTitle(rawTitle)
-    const title =
-      (isEdit ? rawTitle : latest.cleanedTitle).trim() || latest.cleanedTitle.trim()
+    const latest = parseSmartTitle(rawTitle, ignoredTokens.map((t) => t.text))
+    const title = latest.cleanedTitle.trim()
     if (!title) {
       setError('Type a task name')
       return
@@ -293,6 +324,7 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
       priority,
       dueAt: dueAt?.toISOString() ?? null,
       labelIds,
+      projectId: finalProjectId,
       subtasks,
       repeatEvery: freq === 'once' || freq === 'no_repeat' ? 1 : Math.max(1, repeatEvery),
       repeatWeekdays: freq === 'weekly' ? repeatWeekdays : [],
@@ -361,20 +393,168 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="shrink-0 space-y-5 px-5 pt-3 pb-2">
             <div>
-              <div className="rounded-xl border border-[var(--line)] bg-[var(--quiet)] px-3.5 py-2.5">
-                <SmartTaskTitleInput
-                  key={`title-${session}`}
-                  value={rawTitle}
-                  onChange={setRawTitle}
-                  onParsed={onParsed}
-                  onSubmit={() => void submit()}
-                  autoFocus={!isEdit && !focusNotes}
-                  ignoredTokens={ignoredTokens}
-                />
+              <div className="relative">
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--quiet)] px-3.5 py-2.5">
+                  <SmartTaskTitleInput
+                    key={`title-${session}`}
+                    value={rawTitle}
+                    onChange={(val) => {
+                      setRawTitle(val)
+                      // Prune ignored tokens whose text no longer exists in the input.
+                      // This allows re-detection when user backspaces and retypes.
+                      setIgnoredTokens((prev) => {
+                        const kept = prev.filter((tok) =>
+                          val.toLowerCase().includes(tok.text.toLowerCase()),
+                        )
+                        if (kept.length < prev.length) {
+                          const removed = prev.filter(
+                            (tok) => !val.toLowerCase().includes(tok.text.toLowerCase()),
+                          )
+                          for (const tok of removed) {
+                            if (tok.kind === 'due') setDueOverride(undefined)
+                            if (tok.kind === 'repeat') setFreqOverride(undefined)
+                            if (tok.kind === 'priority') setPrioOverride(undefined)
+                          }
+                        }
+                        return kept
+                      })
+                    }}
+                    onParsed={onParsed}
+                    onSubmit={() => void submit()}
+                    autoFocus={!isEdit && !focusNotes}
+                    ignoredTokens={ignoredTokens.map((t) => t.text)}
+                    onAtTrigger={(active, query) => {
+                      setAtMenuOpen(active)
+                      setAtQuery(query)
+                      if (active) setHashMenuOpen(false)
+                    }}
+                    onHashTrigger={(active, query) => {
+                      setHashMenuOpen(active)
+                      setHashQuery(query)
+                      if (active) setAtMenuOpen(false)
+                    }}
+                  />
+                </div>
+                {/* Inline @ project autocomplete — appears directly below the input */}
+                {atMenuOpen && (
+                  <div className="absolute left-0 right-0 z-50 mt-1 rounded-xl border border-[var(--hairline)] bg-[var(--surface)] shadow-lg overflow-hidden">
+                    <div className="max-h-44 overflow-y-auto py-1">
+                      {projects
+                        .filter((p) =>
+                          p.name.toLowerCase().includes(atQuery.toLowerCase()),
+                        )
+                        .map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => {
+                              // Remove the @query from the title
+                              const atIdx = rawTitle.lastIndexOf('@')
+                              if (atIdx !== -1) {
+                                setRawTitle(rawTitle.slice(0, atIdx).trimEnd() + ' ')
+                              }
+                              setProjectOverride(p.id)
+                              setAtMenuOpen(false)
+                              setAtQuery('')
+                            }}
+                            className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-sm text-[var(--ink)] hover:bg-[var(--quiet)] transition-colors"
+                          >
+                            <span
+                              className="w-2.5 h-2.5 rounded-full shrink-0"
+                              style={{ backgroundColor: p.color }}
+                            />
+                            <span className="truncate">{p.name}</span>
+                          </button>
+                        ))}
+                      {atQuery.trim() &&
+                        !projects.some(
+                          (p) => p.name.toLowerCase() === atQuery.trim().toLowerCase(),
+                        ) && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const atIdx = rawTitle.lastIndexOf('@')
+                              if (atIdx !== -1) {
+                                setRawTitle(rawTitle.slice(0, atIdx).trimEnd() + ' ')
+                              }
+                              const newId = await createProject(atQuery.trim())
+                              setProjectOverride(newId)
+                              setAtMenuOpen(false)
+                              setAtQuery('')
+                            }}
+                            className="flex w-full items-center gap-2 px-3.5 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] border-t border-[var(--hairline)] transition-colors"
+                          >
+                            <Plus size={14} />
+                            Create "{atQuery.trim()}"
+                          </button>
+                        )}
+                      {projects.length === 0 && !atQuery.trim() && (
+                        <p className="px-3.5 py-2 text-xs text-[var(--muted)]">No projects yet. Type a name to create one.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {/* Inline # label autocomplete — appears directly below the input */}
+                {hashMenuOpen && (
+                  <div className="absolute left-0 right-0 z-50 mt-1 rounded-xl border border-[var(--hairline)] bg-[var(--surface)] shadow-lg overflow-hidden">
+                    <div className="max-h-44 overflow-y-auto py-1">
+                      {labels
+                        .filter((l) =>
+                          l.name.toLowerCase().includes(hashQuery.toLowerCase()),
+                        )
+                        .map((l) => (
+                          <button
+                            key={l.id}
+                            type="button"
+                            onClick={() => {
+                              const hashIdx = rawTitle.lastIndexOf('#')
+                              if (hashIdx !== -1) {
+                                setRawTitle(rawTitle.slice(0, hashIdx).trimEnd() + ' ')
+                              }
+                              if (!manualLabelNames.includes(l.name)) {
+                                setManualLabelNames((p) => [...p, l.name])
+                              }
+                              setHashMenuOpen(false)
+                              setHashQuery('')
+                            }}
+                            className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-sm text-[var(--ink)] hover:bg-[var(--quiet)] transition-colors"
+                          >
+                            <span className="text-[var(--muted)] shrink-0">#</span>
+                            <span className="truncate">{l.name}</span>
+                          </button>
+                        ))}
+                      {hashQuery.trim() &&
+                        !labels.some(
+                          (l) => l.name.toLowerCase() === hashQuery.trim().toLowerCase(),
+                        ) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const hashIdx = rawTitle.lastIndexOf('#')
+                              if (hashIdx !== -1) {
+                                setRawTitle(rawTitle.slice(0, hashIdx).trimEnd() + ' ')
+                              }
+                              const newLabelName = hashQuery.trim()
+                              if (!manualLabelNames.includes(newLabelName)) {
+                                setManualLabelNames((p) => [...p, newLabelName])
+                              }
+                              setHashMenuOpen(false)
+                              setHashQuery('')
+                            }}
+                            className="flex w-full items-center gap-2 px-3.5 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] border-t border-[var(--hairline)] transition-colors"
+                          >
+                            <Plus size={14} />
+                            Create "#{hashQuery.trim()}"
+                          </button>
+                        )}
+                    </div>
+                  </div>
+                )}
               </div>
               {(dueAt ||
                 labelNames.length > 0 ||
                 priority > 0 ||
+                activeProjectName ||
                 frequency !== 'once') && (
                 <div className="mt-2.5 flex flex-wrap gap-1.5">
                   {dueAt && (
@@ -386,7 +566,7 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
                         className="rounded-full p-0.5 opacity-50 hover:bg-[var(--accent)] hover:text-white hover:opacity-100"
                         onClick={() => {
                           const h = parsed.highlights.find((x) => x.kind === 'due')
-                          if (h) setIgnoredTokens((p) => [...p, h.text])
+                          if (h) setIgnoredTokens((p) => [...p, { text: h.text, kind: 'due' }])
                           setDueOverride(null)
                         }}
                       >
@@ -403,7 +583,7 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
                         className="rounded-full p-0.5 opacity-40 hover:bg-[var(--ink)] hover:text-white hover:opacity-100"
                         onClick={() => {
                           const h = parsed.highlights.find((x) => x.kind === 'repeat')
-                          if (h) setIgnoredTokens((p) => [...p, h.text])
+                          if (h) setIgnoredTokens((p) => [...p, { text: h.text, kind: 'repeat' }])
                           setFreqOverride('once')
                         }}
                       >
@@ -420,8 +600,25 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
                         className="rounded-full p-0.5 opacity-40 hover:bg-[var(--due-soon)] hover:text-white hover:opacity-100"
                         onClick={() => {
                           const h = parsed.highlights.find((x) => x.kind === 'priority')
-                          if (h) setIgnoredTokens((p) => [...p, h.text])
+                          if (h) setIgnoredTokens((p) => [...p, { text: h.text, kind: 'priority' }])
                           setPrioOverride(0)
+                        }}
+                      >
+                        <X size={10} />
+                      </button>
+                    </span>
+                  )}
+                  {activeProjectName && (
+                    <span className="group flex items-center gap-1 rounded-full bg-[var(--quiet)] pl-2.5 pr-1.5 py-1 font-mono-meta text-[11px] text-[var(--ink)]">
+                      @{activeProjectName}
+                      <button
+                        type="button"
+                        aria-label="Remove project"
+                        className="rounded-full p-0.5 opacity-40 hover:bg-[var(--ink)] hover:text-white hover:opacity-100"
+                        onClick={() => {
+                          const h = parsed.highlights.find((x) => x.kind === 'project')
+                          if (h) setIgnoredTokens((p) => [...p, { text: h.text, kind: 'project' }])
+                          setProjectOverride(null)
                         }}
                       >
                         <X size={10} />
@@ -447,7 +644,7 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
                               (x) => x.kind === 'label' && x.text.toLowerCase() === `#${n}`.toLowerCase()
                             )
                             if (h) {
-                              setIgnoredTokens((p) => [...p, h.text])
+                              setIgnoredTokens((p) => [...p, { text: h.text, kind: 'label' }])
                             } else {
                               setExcludedLabelNames((p) => [...p, n])
                             }
@@ -471,6 +668,7 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
                     setRepeatOpen(false)
                     setPriorityOpen(false)
                     setLabelsOpen(false)
+                    setProjectsOpen(false)
                   }}
                 >
                   {dueAt ? format(dueAt, 'MMM d · h:mm a') : 'Due'}
@@ -484,6 +682,7 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
                     setDueOpen(false)
                     setPriorityOpen(false)
                     setLabelsOpen(false)
+                    setProjectsOpen(false)
                   }}
                 >
                   {frequency === 'once'
@@ -562,6 +761,7 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
                     setRepeatOpen(false)
                     setDueOpen(false)
                     setLabelsOpen(false)
+                    setProjectsOpen(false)
                   }}
                 >
                   {priority > 0 ? `P${priority}` : 'Priority'}
@@ -591,14 +791,15 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
                     setRepeatOpen(false)
                     setPriorityOpen(false)
                     setDueOpen(false)
+                    setProjectsOpen(false)
                   }}
                 >
                   {labelsPillText}
                 </Pill>
-                {labelsOpen && (
+                 {labelsOpen && (
                   <Menu onClose={() => setLabelsOpen(false)}>
                     <form
-                      className="flex gap-2 p-1"
+                      className="flex gap-2 p-1.5"
                       onSubmit={(e) => {
                         e.preventDefault()
                         const name = labelDraft.replace(/^#/, '').trim()
@@ -614,15 +815,20 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
                       <input
                         value={labelDraft}
                         onChange={(e) => setLabelDraft(e.target.value)}
-                        placeholder="#home"
-                        className="min-w-0 flex-1 rounded-lg border border-[var(--hairline)] px-2 py-1.5 text-sm"
+                        placeholder="#tag"
+                        className="min-w-0 flex-1 rounded-lg border border-[var(--hairline)] px-2.5 py-1 text-xs"
                         autoFocus
                       />
                       <button
                         type="submit"
-                        className="rounded-lg bg-[var(--accent)] px-2 py-1.5 text-sm text-white"
+                        className="rounded-lg bg-[var(--accent)] px-2.5 py-1 text-xs font-medium text-white whitespace-nowrap"
                       >
-                        Add
+                        {labelDraft.trim() &&
+                        !labels.some(
+                          (l) => l.name.toLowerCase() === labelDraft.replace(/^#/, '').trim().toLowerCase(),
+                        )
+                          ? `+ Create "#${labelDraft.replace(/^#/, '').trim()}"`
+                          : 'Add'}
                       </button>
                     </form>
                     {labels.map((l) => (
@@ -667,6 +873,86 @@ export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, o
                         #{l.name}
                       </MenuItem>
                     ))}
+                  </Menu>
+                )}
+              </div>
+              <div className="relative">
+                <Pill
+                  active={Boolean(activeProjectName)}
+                  onClick={() => {
+                    setProjectsOpen((v) => !v)
+                    setLabelsOpen(false)
+                    setRepeatOpen(false)
+                    setPriorityOpen(false)
+                    setDueOpen(false)
+                  }}
+                >
+                  {activeProjectName ? `@${activeProjectName}` : 'Project'}
+                </Pill>
+                {projectsOpen && (
+                  <Menu onClose={() => { setProjectsOpen(false); setProjectSearch(''); }}>
+                    <div className="p-1.5">
+                      <input
+                        value={projectSearch}
+                        onChange={(e) => setProjectSearch(e.target.value)}
+                        placeholder="Search or create project…"
+                        className="w-full rounded-lg border border-[var(--hairline)] px-2.5 py-1 text-xs text-[var(--ink)] bg-[var(--surface)]"
+                        autoFocus
+                      />
+                    </div>
+                    <div className="max-h-48 overflow-y-auto">
+                      {finalProjectId !== null && (
+                        <MenuItem
+                          active={false}
+                          onClick={() => {
+                            setProjectOverride(null)
+                            setProjectsOpen(false)
+                            setProjectSearch('')
+                          }}
+                        >
+                          Remove from project
+                        </MenuItem>
+                      )}
+                      {projects
+                        .filter((p) =>
+                          p.name.toLowerCase().includes(projectSearch.trim().toLowerCase()),
+                        )
+                        .map((p) => (
+                          <MenuItem
+                            key={p.id}
+                            active={finalProjectId === p.id}
+                            onClick={() => {
+                              setProjectOverride(p.id)
+                              setProjectsOpen(false)
+                              setProjectSearch('')
+                            }}
+                          >
+                            <span
+                              className="w-2.5 h-2.5 rounded-full mr-2 inline-block shrink-0"
+                              style={{ backgroundColor: p.color }}
+                            />
+                            <span className="truncate">{p.name}</span>
+                          </MenuItem>
+                        ))}
+                      {projectSearch.trim() &&
+                        !projects.some(
+                          (p) => p.name.toLowerCase() === projectSearch.trim().toLowerCase(),
+                        ) && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const newId = await createProject(projectSearch.trim())
+                              setProjectOverride(newId)
+                              setProjectsOpen(false)
+                              setProjectSearch('')
+                            }}
+                            className="flex w-full items-center gap-2 px-3.5 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)] border-t border-[var(--hairline)]"
+                          >
+                            <Plus size={14} />
+                            Create project "{projectSearch.trim()}"
+                          </button>
+                        )}
+                    </div>
                   </Menu>
                 )}
               </div>

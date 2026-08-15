@@ -1,7 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import { useLabels } from '../hooks/useLabels'
 import { usePwa } from '../hooks/usePwa'
 import {
   getNotificationSettings,
@@ -22,10 +21,7 @@ import type { NotificationSettings } from '../types/models'
 
 export function ProfilePage() {
   const { user, logout, updateDisplayName } = useAuth()
-  const { labels, rename, remove } = useLabels()
   const { needRefresh, updateServiceWorker } = usePwa()
-  const [renameId, setRenameId] = useState<string | null>(null)
-  const [renameDraft, setRenameDraft] = useState('')
   const [nameDraft, setNameDraft] = useState(user?.displayName ?? '')
   const [editingName, setEditingName] = useState(false)
   const [nameBusy, setNameBusy] = useState(false)
@@ -484,69 +480,6 @@ export function ProfilePage() {
           </button>
         </div>
       </div>
-
-      <section className="rounded-[var(--radius-modal)] border border-[var(--hairline)] bg-[var(--surface)] p-5">
-        <h3 className="text-base font-semibold text-[var(--ink)]">Labels</h3>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          Used from #tags when creating tasks. Rename or delete here.
-        </p>
-        <ul className="mt-3 space-y-2">
-          {labels.length === 0 && (
-            <li className="text-sm text-[var(--muted)]">No labels yet.</li>
-          )}
-          {labels.map((l) => (
-            <li
-              key={l.id}
-              className="flex items-center gap-2 rounded-[10px] border border-[var(--hairline)] px-3 py-2"
-            >
-              <span
-                className="h-2.5 w-2.5 rounded-full"
-                style={{ background: l.color }}
-              />
-              {renameId === l.id ? (
-                <form
-                  className="flex min-w-0 flex-1 gap-2"
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    void rename(l.id, renameDraft).then(() => setRenameId(null))
-                  }}
-                >
-                  <input
-                    value={renameDraft}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    className="min-w-0 flex-1 rounded-lg border border-[var(--hairline)] px-2 py-1 text-sm"
-                    autoFocus
-                  />
-                  <button type="submit" className="text-sm text-[var(--accent)]">
-                    Save
-                  </button>
-                </form>
-              ) : (
-                <>
-                  <span className="min-w-0 flex-1 text-sm">#{l.name}</span>
-                  <button
-                    type="button"
-                    className="text-xs text-[var(--muted)]"
-                    onClick={() => {
-                      setRenameId(l.id)
-                      setRenameDraft(l.name)
-                    }}
-                  >
-                    Rename
-                  </button>
-                  <button
-                    type="button"
-                    className="text-xs text-[var(--danger)]"
-                    onClick={() => void remove(l.id)}
-                  >
-                    Delete
-                  </button>
-                </>
-              )}
-            </li>
-          ))}
-        </ul>
-      </section>
     </div>
   )
 }

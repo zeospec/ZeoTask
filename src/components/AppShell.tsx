@@ -2,14 +2,16 @@ import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { CreateTaskModal } from './CreateTaskModal'
-import { Search, ZeoMark, CalendarIcon, ListIcon } from './icons'
+import { Search, ZeoMark, CalendarIcon, ListIcon, X } from './icons'
 import { LiveAnnouncer, ToastStack } from './ToastStack'
 import { SearchOverlay } from './SearchOverlay'
 import { FilterMenu, type FilterState } from './FilterMenu'
 import { useAuth } from '../hooks/useAuth'
 import { useChores } from '../hooks/useChores'
 import { usePwa } from '../hooks/usePwa'
+import { useProjects } from '../hooks/useProjects'
 import { notificationPermission, enablePushNotifications } from '../lib/push'
+import { Sidebar } from './Sidebar'
 import type { Chore } from '../types/models'
 
 function ProfileAvatar({
@@ -51,7 +53,8 @@ function ProfileAvatar({
 
 export function AppShell() {
   const { user, logout } = useAuth()
-  const { syncing, chores } = useChores()
+  const { syncing } = useChores()
+  const { projects } = useProjects()
   const [createOpen, setCreateOpen] = useState(false)
   const [createInitialDue, setCreateInitialDue] = useState<Date | undefined>()
   const [editing, setEditing] = useState<Chore | null>(null)
@@ -59,12 +62,30 @@ export function AppShell() {
   const [viewMenuOpen, setViewMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [activeFilter, setActiveFilter] = useState<FilterState | null>(null)
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activeDate, setActiveDate] = useState<Date | null>(null)
 
   const { installPrompt, promptInstall } = usePwa()
+  const [dismissedInstall, setDismissedInstall] = useState(
+    () => localStorage.getItem('zeotask_dismiss_install') === 'true'
+  )
   const [pushPerm, setPushPerm] = useState(notificationPermission())
+  const [dismissedPush, setDismissedPush] = useState(
+    () => localStorage.getItem('zeotask_dismiss_push') === 'true'
+  )
   const [pushBusy, setPushBusy] = useState(false)
-  const showPushPrompt = pushPerm === 'default'
+  const showPushPrompt = pushPerm === 'default' && !dismissedPush
+
+  function handleDismissInstall() {
+    setDismissedInstall(true)
+    localStorage.setItem('zeotask_dismiss_install', 'true')
+  }
+
+  function handleDismissPush() {
+    setDismissedPush(true)
+    localStorage.setItem('zeotask_dismiss_push', 'true')
+  }
 
   async function handleEnablePush() {
     if (!user) return
@@ -98,9 +119,10 @@ export function AppShell() {
   const composerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  const remaining = chores.filter((c) => !c.archivedAt).length
   const displayName =
     user?.displayName?.trim() || user?.email?.split('@')[0] || 'Account'
+  
+  const activeProject = activeProjectId ? projects.find(p => p.id === activeProjectId) : null
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -129,6 +151,20 @@ export function AppShell() {
       if (!typing && (e.key === 'c' || e.key === 'n') && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
         openCreate()
+      }
+      
+      // View mode shortcuts
+      if (!typing && !e.metaKey && !e.ctrlKey) {
+        if (e.key === 'a') {
+          e.preventDefault()
+          setViewMode('agenda')
+        } else if (e.key === 'w') {
+          e.preventDefault()
+          setViewMode('week')
+        } else if (e.key === 'm') {
+          e.preventDefault()
+          setViewMode('month')
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -162,21 +198,37 @@ export function AppShell() {
     <div className="mx-auto flex min-h-dvh max-w-[680px] flex-col px-5 pt-6 pb-[calc(6.5rem+env(safe-area-inset-bottom))] sm:px-6">
       <header className="mb-8 flex items-center justify-between gap-3 border-b border-[var(--hairline)] pb-5">
         <div className="flex items-center gap-3">
-          <ZeoMark size={36} />
-          <div>
-            <p className="text-lg font-semibold tracking-tight text-[var(--ink)]">
-              ZeoTask
-            </p>
+          <button 
+            type="button" 
+            className="focus-ring flex h-11 w-11 items-center justify-center rounded-[var(--radius-control)] text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)] -ml-2"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open navigation"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+          </button>
+          <div className="flex items-center gap-2">
+            <ZeoMark size={32} />
+            <div>
+              <p className="flex items-center gap-2 text-lg font-semibold tracking-tight text-[var(--ink)]">
+                {activeProject ? (
+                  <>
+                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: activeProject.color }} />
+                    {activeProject.name}
+                  </>
+                ) : (
+                  'ZeoTask'
+                )}
+              </p>
             {syncing ? (
               <p className="font-mono-meta text-[11px] text-[var(--muted)]">
                 Syncing…
               </p>
             ) : (
-              <p className="font-mono-meta text-[11px] uppercase tracking-widest text-[var(--muted)]">
+              <p className="font-mono-meta text-[11px] uppercase tracking-widest text-[var(--muted)] hidden sm:block">
                 {format(new Date(), 'EEE · MMM d')}
-                {onHome && remaining > 0 ? ` · ${remaining} left` : ''}
               </p>
             )}
+            </div>
           </div>
         </div>
 
@@ -312,52 +364,72 @@ export function AppShell() {
         </div>
       </header>
 
-      {(installPrompt || showPushPrompt) && onHome && (
-        <div className="mb-6 rounded-[var(--radius-modal)] border border-[var(--hairline)] bg-[var(--surface)] p-4 shadow-sm">
-          {installPrompt ? (
-            <div className="flex items-center justify-between gap-4">
-              <div>
+      {((installPrompt && !dismissedInstall) || showPushPrompt) && onHome && (
+        <div className="mb-6 rounded-[var(--radius-modal)] border border-[var(--hairline)] bg-[var(--surface)] p-4 shadow-sm transition-all">
+          {installPrompt && !dismissedInstall ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
                 <h3 className="text-sm font-semibold text-[var(--ink)]">Install ZeoTask</h3>
                 <p className="mt-0.5 text-xs text-[var(--muted)]">Add to your home screen for the best experience.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void promptInstall()}
-                className="focus-ring whitespace-nowrap rounded-[var(--radius-control)] bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white"
-              >
-                Install app
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <h3 className="text-sm font-semibold text-[var(--ink)]">Get notified</h3>
-                <p className="mt-0.5 text-xs text-[var(--muted)]">Enable due date reminders and morning digests.</p>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setPushPerm('denied')}
-                  className="focus-ring whitespace-nowrap rounded-[var(--radius-control)] px-3 py-1.5 text-xs font-medium text-[var(--muted)] hover:bg-[var(--quiet)]"
+                  onClick={() => void promptInstall()}
+                  className="focus-ring whitespace-nowrap rounded-[var(--radius-control)] bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-95"
                 >
-                  Skip
+                  Install app
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDismissInstall}
+                  aria-label="Dismiss install banner"
+                  className="focus-ring flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)]"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          ) : showPushPrompt ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-semibold text-[var(--ink)]">Get notified</h3>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">Enable due date reminders and morning digests.</p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={pushBusy}
+                  onClick={handleDismissPush}
+                  className="focus-ring whitespace-nowrap rounded-[var(--radius-control)] px-2.5 py-1.5 text-xs font-medium text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)] disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  Not now
                 </button>
                 <button
                   type="button"
                   disabled={pushBusy}
                   onClick={() => void handleEnablePush()}
-                  className="focus-ring whitespace-nowrap rounded-[var(--radius-control)] bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                  className="focus-ring whitespace-nowrap rounded-[var(--radius-control)] bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-75 transition hover:opacity-95"
                 >
-                  Enable
+                  {pushBusy ? 'Enabling…' : 'Enable'}
+                </button>
+                <button
+                  type="button"
+                  disabled={pushBusy}
+                  onClick={handleDismissPush}
+                  aria-label="Dismiss notification prompt"
+                  className="focus-ring flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)] disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  <X size={14} />
                 </button>
               </div>
             </div>
-          )}
+          ) : null}
         </div>
       )}
 
       <main className="flex-1">
-        <Outlet context={{ openEdit, openCreate, activeFilter, viewMode, setActiveDate }} />
+        <Outlet context={{ openEdit, openCreate, activeFilter, activeProjectId, viewMode, setActiveDate }} />
       </main>
 
       {onHome && (
@@ -382,6 +454,7 @@ export function AppShell() {
         open={createOpen}
         editing={editing}
         initialDue={createInitialDue}
+        activeProjectId={activeProjectId}
         onClose={() => {
           setCreateOpen(false)
           setEditing(null)
@@ -391,6 +464,17 @@ export function AppShell() {
           setCreateOpen(false)
           setEditing(null)
           composerRef.current?.focus()
+        }}
+      />
+
+      <Sidebar 
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        activeProjectId={activeProjectId}
+        onSelectProject={(id) => {
+          setActiveProjectId(id)
+          // Also navigate home if they were in /completed
+          if (!onHome) navigate('/')
         }}
       />
 

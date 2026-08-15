@@ -1,7 +1,7 @@
 import * as chrono from 'chrono-node'
 import type { Frequency, Priority } from '../types/models'
 
-export type HighlightKind = 'due' | 'repeat' | 'priority' | 'label'
+export type HighlightKind = 'due' | 'repeat' | 'priority' | 'label' | 'project'
 
 export type TextHighlight = {
   text: string
@@ -16,6 +16,7 @@ export type SmartParseResult = {
   frequency: Frequency
   priority: Priority
   labelNames: string[]
+  projectName: string | null
   highlights: TextHighlight[]
   repeatLabel: string | null
 }
@@ -34,6 +35,7 @@ type MutableParse = {
   frequency: Frequency
   priority: Priority
   labelNames: string[]
+  projectName: string | null
   repeatLabel: string | null
 }
 
@@ -138,6 +140,27 @@ function collectLabels(input: string): RawMatch[] {
         if (!acc.labelNames.some((n) => n.toLowerCase() === name.toLowerCase())) {
           acc.labelNames.push(name)
         }
+      },
+    })
+  }
+  return out
+}
+
+function collectProject(input: string): RawMatch[] {
+  const projectPattern = /@([\p{L}\p{N}_]+)/giu
+  const out: RawMatch[] = []
+  for (const match of input.matchAll(projectPattern)) {
+    const full = match[0]
+    const name = match[1]
+    const start = match.index ?? 0
+    out.push({
+      kind: 'project',
+      start,
+      end: start + full.length,
+      text: full,
+      priority: 35,
+      apply: (acc) => {
+        acc.projectName = name
       },
     })
   }
@@ -297,6 +320,7 @@ export function parseSmartTitle(input: string, ignoredTokens: string[] = []): Sm
     frequency: 'once',
     priority: 0,
     labelNames: [],
+    projectName: null,
     highlights: [],
     repeatLabel: null,
   }
@@ -306,8 +330,9 @@ export function parseSmartTitle(input: string, ignoredTokens: string[] = []): Sm
     ...collectRepeat(input),
     ...collectPriority(input),
     ...collectLabels(input),
+    ...collectProject(input),
     ...collectDue(input),
-  ].filter((c) => !ignoredTokens.includes(c.text))
+  ].filter((c) => !ignoredTokens.some((ig) => ig.toLowerCase() === c.text.toLowerCase()))
   const chosen = pickNonOverlapping(candidates)
 
   const acc: MutableParse = {
@@ -315,6 +340,7 @@ export function parseSmartTitle(input: string, ignoredTokens: string[] = []): Sm
     frequency: 'once',
     priority: 0,
     labelNames: [],
+    projectName: null,
     repeatLabel: null,
   }
   for (const match of chosen) match.apply(acc)
@@ -328,6 +354,7 @@ export function parseSmartTitle(input: string, ignoredTokens: string[] = []): Sm
     frequency: acc.frequency,
     priority: acc.priority,
     labelNames: acc.labelNames,
+    projectName: acc.projectName,
     repeatLabel: acc.repeatLabel,
     highlights: chosen.map((m) => ({
       text: m.text,

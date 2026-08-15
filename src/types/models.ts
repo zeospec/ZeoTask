@@ -49,6 +49,14 @@ export interface Label {
   updatedAt: string
 }
 
+export interface Project {
+  id: string
+  name: string
+  color: string
+  createdAt: string
+  updatedAt: string
+}
+
 export type ChoreBucket =
   | 'overdue'
   | 'today'

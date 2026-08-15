@@ -102,7 +102,7 @@ export function FilterMenu({ activeFilter, onChange }: Props) {
             aria-label="Close menu"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute top-full right-0 z-50 mt-2 w-72 overflow-hidden rounded-[var(--radius-control)] border border-[var(--hairline)] bg-[var(--surface)] py-2 shadow-[var(--shadow-card)] max-h-[70vh] flex flex-col">
+          <div className="fixed top-16 left-4 right-4 z-50 flex max-h-[70vh] flex-col overflow-hidden rounded-[var(--radius-control)] border border-[var(--hairline)] bg-[var(--surface)] py-2 shadow-xl sm:absolute sm:top-full sm:left-auto sm:right-0 sm:mt-2 sm:w-72 sm:shadow-[var(--shadow-card)]">
             
             {views.length > 0 && (
               <div className="mb-2">

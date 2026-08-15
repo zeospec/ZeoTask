@@ -44,6 +44,7 @@ export type ChoreInput = {
   subtasks?: Subtask[]
   reminderEnabled?: boolean
   predueHours?: number
+  projectId?: string | null
 }
 
 export type ChoresSnapshotMeta = {
@@ -94,7 +95,7 @@ function buildPayload(input: ChoreInput, stamp: string): Omit<Chore, 'id'> {
     repeatEvery: input.repeatEvery ?? 1,
     repeatWeekdays: input.repeatWeekdays ?? [],
     labelIds: input.labelIds ?? [],
-    projectId: null,
+    projectId: input.projectId ?? null,
     subtasks: input.subtasks ?? [],
     reminderEnabled: input.reminderEnabled ?? true,
     predueHours: input.predueHours ?? 24,

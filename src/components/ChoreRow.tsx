@@ -48,7 +48,7 @@ export function ChoreRow({
         onClick={onOpen}
         className="min-w-0 flex-1 text-left"
       >
-        <h3 className="truncate text-[15.5px] font-medium leading-[22px] text-[var(--ink)]">
+        <h3 className="text-[15.5px] font-medium leading-[22px] text-[var(--ink)]">
           {chore.title}
         </h3>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">

@@ -79,15 +79,15 @@ function mapIntervalUnit(unit: string): Frequency {
 function collectPriority(input: string): RawMatch[] {
   const out: RawMatch[] = []
 
-  // Natural P1–P4 (optional legacy bang): "buy milk p2", "!p1"
-  for (const match of input.matchAll(/!?p([1-4])\b/gi)) {
-    const full = match[0]
-    const prio = Number(match[1]) as Priority
-    const start = match.index ?? 0
+  // Natural P1–P4 with strict word boundary: "buy milk p2", "!p1", "p4"
+  for (const match of input.matchAll(/(?:^|[\s,;])(!?p([1-4]))(?=[\s,;]|$)/gi)) {
+    const full = match[1]
+    const prio = Number(match[2]) as Priority
+    const exactStart = (match.index ?? 0) + match[0].indexOf(full)
     out.push({
       kind: 'priority',
-      start,
-      end: start + full.length,
+      start: exactStart,
+      end: exactStart + full.length,
       text: full,
       priority: 55,
       apply: (acc) => {
@@ -96,7 +96,6 @@ function collectPriority(input: string): RawMatch[] {
     })
   }
 
-  const sentence = input.toLowerCase()
   const phraseMap: Record<number, string[]> = {
     1: ['priority 1', 'high priority', 'urgent', 'asap', 'important'],
     2: ['priority 2', 'medium priority'],
@@ -106,34 +105,39 @@ function collectPriority(input: string): RawMatch[] {
 
   for (const [prio, terms] of Object.entries(phraseMap)) {
     for (const term of terms) {
-      const index = sentence.indexOf(term)
-      if (index === -1) continue
-      out.push({
-        kind: 'priority',
-        start: index,
-        end: index + term.length,
-        text: input.slice(index, index + term.length),
-        priority: 50,
-        apply: (acc) => {
-          acc.priority = Number(prio) as Priority
-        },
-      })
+      const regex = new RegExp(`\\b${term}\\b`, 'gi')
+      for (const match of input.matchAll(regex)) {
+        const start = match.index ?? 0
+        out.push({
+          kind: 'priority',
+          start,
+          end: start + match[0].length,
+          text: match[0],
+          priority: 50,
+          apply: (acc) => {
+            acc.priority = Number(prio) as Priority
+          },
+        })
+      }
     }
+  }
+  if (out.length > 0) {
+    return [out[out.length - 1]]
   }
   return out
 }
 
 function collectLabels(input: string): RawMatch[] {
-  const labelPattern = /#([\p{L}\p{N}_]+)/giu
+  const labelPattern = /(?:^|[\s,;])(#([\p{L}\p{N}_-]+))(?=[\s,;]|$)/giu
   const out: RawMatch[] = []
   for (const match of input.matchAll(labelPattern)) {
-    const full = match[0]
-    const name = match[1]
-    const start = match.index ?? 0
+    const full = match[1]
+    const name = match[2]
+    const exactStart = (match.index ?? 0) + match[0].indexOf(full)
     out.push({
       kind: 'label',
-      start,
-      end: start + full.length,
+      start: exactStart,
+      end: exactStart + full.length,
       text: full,
       priority: 30,
       apply: (acc) => {
@@ -147,22 +151,25 @@ function collectLabels(input: string): RawMatch[] {
 }
 
 function collectProject(input: string): RawMatch[] {
-  const projectPattern = /@([\p{L}\p{N}_]+)/giu
+  const projectPattern = /(?:^|[\s,;])(@([\p{L}\p{N}_-]+))(?=[\s,;]|$)/giu
   const out: RawMatch[] = []
   for (const match of input.matchAll(projectPattern)) {
-    const full = match[0]
-    const name = match[1]
-    const start = match.index ?? 0
+    const full = match[1]
+    const name = match[2]
+    const exactStart = (match.index ?? 0) + match[0].indexOf(full)
     out.push({
       kind: 'project',
-      start,
-      end: start + full.length,
+      start: exactStart,
+      end: exactStart + full.length,
       text: full,
       priority: 35,
       apply: (acc) => {
         acc.projectName = name
       },
     })
+  }
+  if (out.length > 0) {
+    return [out[out.length - 1]]
   }
   return out
 }
@@ -241,37 +248,17 @@ function collectRepeat(input: string): RawMatch[] {
 
 function collectDue(input: string): RawMatch[] {
   const parsed = chrono.parse(input, new Date(), { forwardDate: true })
-  const dueDateMatch = parsed.find(
+  const dueDateMatch = [...parsed].reverse().find(
     (match) =>
       match.index !== undefined &&
       isValidWordBoundary(input, match.index, match.text.length),
   )
   if (!dueDateMatch || dueDateMatch.index === undefined) return []
 
+  const rawText = dueDateMatch.text
+  const text = rawText.trimEnd()
   const dueDateStartIndex = dueDateMatch.index
-  const dueDateEndIndex = dueDateStartIndex + dueDateMatch.text.length
-  const precedingWords = [
-    'starting',
-    'from',
-    'beginning',
-    'begin',
-    'commence',
-    'commencing',
-    'due',
-    'on',
-    'by',
-  ]
-
-  let highlightStartIndex = dueDateStartIndex
-  const textBeforeDueDate = input.substring(0, dueDateStartIndex).trimEnd()
-  for (const word of precedingWords) {
-    const wordPattern = new RegExp(`\\b${word}\\s*$`, 'i')
-    const match = textBeforeDueDate.match(wordPattern)
-    if (match) {
-      highlightStartIndex = textBeforeDueDate.length - match[0].length
-      break
-    }
-  }
+  const dueDateEndIndex = dueDateStartIndex + text.length
 
   let resultDate = dueDateMatch.start.date()
   if (!dueDateMatch.start.isCertain('hour')) {
@@ -282,9 +269,9 @@ function collectDue(input: string): RawMatch[] {
   return [
     {
       kind: 'due',
-      start: highlightStartIndex,
+      start: dueDateStartIndex,
       end: dueDateEndIndex,
-      text: input.slice(highlightStartIndex, dueDateEndIndex),
+      text: input.slice(dueDateStartIndex, dueDateEndIndex),
       priority: 20,
       apply: (acc) => {
         acc.dueAt = resultDate

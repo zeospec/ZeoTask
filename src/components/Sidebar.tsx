@@ -132,10 +132,10 @@ export function Sidebar({ open, onClose, activeProjectId, onSelectProject }: Sid
                     <button
                       type="button"
                       onClick={() => setEditingEntity({ type: 'project', id: project.id, name: project.name, color: project.color })}
-                      className="opacity-0 group-hover:opacity-100 p-1.5 text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)] rounded-[var(--radius-control)] transition-all ml-1 shrink-0"
+                      className="p-1.5 text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)] rounded-[var(--radius-control)] transition-all ml-1 shrink-0"
                       aria-label="Edit project"
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></svg>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="19" r="1"></circle><circle cx="12" cy="5" r="1"></circle></svg>
                     </button>
                   </div>
                 ))}
@@ -220,10 +220,10 @@ export function Sidebar({ open, onClose, activeProjectId, onSelectProject }: Sid
                     <button
                       type="button"
                       onClick={() => setEditingEntity({ type: 'label', id: label.id, name: label.name })}
-                      className="opacity-0 group-hover:opacity-100 p-1.5 text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)] rounded-[var(--radius-control)] transition-all ml-1 shrink-0"
+                      className="p-1.5 text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)] rounded-[var(--radius-control)] transition-all ml-1 shrink-0"
                       aria-label="Edit label"
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></svg>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="19" r="1"></circle><circle cx="12" cy="5" r="1"></circle></svg>
                     </button>
                   </div>
                 ))}

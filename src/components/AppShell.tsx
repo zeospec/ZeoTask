@@ -12,6 +12,7 @@ import { usePwa } from '../hooks/usePwa'
 import { useProjects } from '../hooks/useProjects'
 import { notificationPermission, enablePushNotifications } from '../lib/push'
 import { Sidebar } from './Sidebar'
+import { InlineQuickAdd } from './InlineQuickAdd'
 import type { Chore } from '../types/models'
 
 function ProfileAvatar({
@@ -51,12 +52,20 @@ function ProfileAvatar({
   )
 }
 
+export type CreateOverrides = {
+  projectId: string | null
+  manualLabels: string[]
+  ignoredTokens: { text: string; kind: string }[]
+}
+
 export function AppShell() {
   const { user, logout } = useAuth()
   const { syncing } = useChores()
   const { projects } = useProjects()
   const [createOpen, setCreateOpen] = useState(false)
   const [createInitialDue, setCreateInitialDue] = useState<Date | undefined>()
+  const [createInitialTitle, setCreateInitialTitle] = useState('')
+  const [createOverrides, setCreateOverrides] = useState<CreateOverrides | undefined>()
   const [editing, setEditing] = useState<Chore | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [viewMenuOpen, setViewMenuOpen] = useState(false)
@@ -182,15 +191,18 @@ export function AppShell() {
     setMenuOpen(false)
   }, [location.pathname])
 
-  function openCreate(initialDue?: Date) {
+  function openCreate(initialDue?: Date, initialTitle: string = '', overrides?: CreateOverrides) {
     setEditing(null)
     setCreateInitialDue(initialDue)
+    setCreateInitialTitle(initialTitle)
+    setCreateOverrides(overrides)
     setCreateOpen(true)
   }
 
   function openEdit(chore: Chore) {
     setEditing(chore)
     setCreateInitialDue(undefined)
+    setCreateOverrides(undefined)
     setCreateOpen(true)
   }
 
@@ -450,19 +462,10 @@ export function AppShell() {
 
       {onHome && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--hairline)] bg-[var(--canvas)]/95 px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur">
-          <div className="mx-auto max-w-[680px]">
-            <button
-              ref={composerRef}
-              type="button"
-              onClick={() => openCreate(viewMode !== 'agenda' && activeDate ? activeDate : undefined)}
-              className="focus-ring flex h-14 w-full min-h-11 items-center rounded-[var(--radius-control)] border border-[var(--hairline)] bg-[var(--surface)] px-4 text-left text-sm text-[var(--muted)] transition hover:border-[var(--accent)]/35"
-            >
-              Type a task…
-              <span className="ml-auto hidden font-mono-meta text-[11px] text-[var(--muted)] sm:inline">
-                C · ⌘K
-              </span>
-            </button>
-          </div>
+          <InlineQuickAdd 
+            activeProjectId={activeProjectId} 
+            onExpand={(title, overrides) => openCreate(viewMode !== 'agenda' && activeDate ? activeDate : undefined, title, overrides)} 
+          />
         </div>
       )}
 
@@ -470,15 +473,19 @@ export function AppShell() {
         open={createOpen}
         editing={editing}
         initialDue={createInitialDue}
+        initialTitle={createInitialTitle}
+        initialOverrides={createOverrides}
         activeProjectId={activeProjectId}
         onClose={() => {
           setCreateOpen(false)
           setEditing(null)
+          setCreateOverrides(undefined)
           composerRef.current?.focus()
         }}
         onSaved={() => {
           setCreateOpen(false)
           setEditing(null)
+          setCreateOverrides(undefined)
           composerRef.current?.focus()
         }}
       />

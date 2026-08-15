@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { PROJECT_COLORS } from '../lib/projects'
 import { X } from './icons'
 
@@ -24,13 +25,18 @@ export function EntityManageModal({
   const [name, setName] = useState(initialName)
   const [color, setColor] = useState(initialColor || PROJECT_COLORS[0])
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [useCustomColor, setUseCustomColor] = useState(false)
+  const colorInputRef = useRef<HTMLInputElement>(null)
 
   // Reset state when modal opens
   useEffect(() => {
     if (open) {
       setName(initialName)
-      setColor(initialColor || PROJECT_COLORS[0])
+      const c = initialColor || PROJECT_COLORS[0]
+      setColor(c)
       setConfirmDelete(false)
+      // If the initialColor isn't one of the presets, mark custom as active
+      setUseCustomColor(!!initialColor && !PROJECT_COLORS.includes(initialColor))
     }
   }, [open, initialName, initialColor])
 
@@ -52,9 +58,19 @@ export function EntityManageModal({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm transition-opacity">
-      <div className="w-full max-w-sm overflow-hidden rounded-[var(--radius-card)] bg-[var(--surface)] shadow-2xl">
+  const isPresetColor = PROJECT_COLORS.includes(color)
+
+  const modal = (
+    <div
+      className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div
+        className="w-full sm:max-w-sm sm:rounded-[var(--radius-modal)] rounded-t-[1.25rem] bg-[var(--surface)] shadow-2xl modal-panel overflow-hidden"
+      >
+        {/* Header */}
         <div className="flex items-center justify-between border-b border-[var(--hairline)] px-5 py-4">
           <h2 className="text-lg font-semibold text-[var(--ink)] tracking-tight">
             Edit {type === 'project' ? 'Project' : 'Label'}
@@ -68,8 +84,10 @@ export function EntityManageModal({
           </button>
         </div>
 
+        {/* Body */}
         <form onSubmit={handleSave} className="p-5">
           <div className="space-y-4">
+            {/* Name Input */}
             <div>
               <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
                 Name
@@ -84,30 +102,76 @@ export function EntityManageModal({
               />
             </div>
 
+            {/* Color Picker for Projects */}
             {type === 'project' && (
               <div>
                 <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
                   Color
                 </label>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {PROJECT_COLORS.map((c) => (
                     <button
                       key={c}
                       type="button"
-                      onClick={() => setColor(c)}
+                      onClick={() => {
+                        setColor(c)
+                        setUseCustomColor(false)
+                      }}
                       className={`h-8 w-8 rounded-full border-2 transition-transform hover:scale-110 ${
-                        color === c ? 'border-[var(--ink)]' : 'border-transparent'
+                        color === c && !useCustomColor ? 'border-[var(--ink)] scale-110' : 'border-transparent'
                       }`}
                       style={{ backgroundColor: c }}
                       aria-label={`Select color ${c}`}
                     />
                   ))}
+
+                  {/* Custom color button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUseCustomColor(true)
+                      // Small delay so the hidden input renders before we click it
+                      setTimeout(() => colorInputRef.current?.click(), 50)
+                    }}
+                    className={`relative flex h-8 w-8 items-center justify-center rounded-full border-2 transition-transform hover:scale-110 ${
+                      useCustomColor ? 'border-[var(--ink)] scale-110' : 'border-[var(--hairline)]'
+                    }`}
+                    style={useCustomColor ? { backgroundColor: color } : {
+                      background: 'conic-gradient(from 0deg, #f44, #f90, #ff0, #0b0, #09f, #90f, #f44)',
+                    }}
+                    aria-label="Pick a custom color"
+                  >
+                    {/* Hidden native color picker */}
+                    <input
+                      ref={colorInputRef}
+                      type="color"
+                      value={color}
+                      onChange={(e) => {
+                        setColor(e.target.value)
+                        setUseCustomColor(true)
+                      }}
+                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                      tabIndex={-1}
+                    />
+                  </button>
+                </div>
+
+                {/* Live preview of selected color */}
+                <div className="mt-3 flex items-center gap-2">
+                  <span
+                    className="inline-block h-3 w-3 rounded-full"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className="text-xs font-mono text-[var(--muted)] uppercase">
+                    {color}
+                  </span>
                 </div>
               </div>
             )}
           </div>
 
-          <div className="mt-8 flex items-center justify-between">
+          {/* Footer Actions */}
+          <div className="mt-6 flex items-center justify-between">
             <button
               type="button"
               onClick={handleDelete}
@@ -142,4 +206,8 @@ export function EntityManageModal({
       </div>
     </div>
   )
+
+  // Portal to document.body so the modal is never trapped inside a
+  // transformed/overflow-hidden sidebar panel.
+  return createPortal(modal, document.body)
 }

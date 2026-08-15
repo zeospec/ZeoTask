@@ -207,8 +207,8 @@ export function AppShell() {
   }
 
   return (
-    <div className="mx-auto flex min-h-dvh max-w-[680px] flex-col px-5 pt-6 pb-[calc(6.5rem+env(safe-area-inset-bottom))] sm:px-6">
-      <header className="mb-8 flex items-center justify-between gap-3 border-b border-[var(--hairline)] pb-5">
+    <div className="mx-auto flex min-h-dvh max-w-[680px] flex-col px-5 pb-[calc(6.5rem+env(safe-area-inset-bottom))] sm:px-6">
+      <header className="sticky top-0 z-30 -mx-5 sm:-mx-6 mb-8 flex items-center justify-between gap-3 border-b border-[var(--hairline)] bg-[var(--canvas)]/95 px-5 sm:px-6 pt-6 pb-5 backdrop-blur">
         <div className="flex items-center gap-3">
           <button 
             type="button" 

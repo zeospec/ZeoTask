@@ -244,6 +244,16 @@ export function InlineQuickAdd({ activeProjectId, onExpand }: Props) {
             highlights={parsed.highlights}
           />
         </div>
+        {rawTitle.trim() && (
+          <button
+            type="button"
+            onClick={handleSubmit}
+            className="ml-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-white transition-all hover:opacity-90 active:scale-95"
+            title="Add task"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+          </button>
+        )}
         <button
           type="button"
           onClick={() => {
@@ -258,7 +268,7 @@ export function InlineQuickAdd({ activeProjectId, onExpand }: Props) {
             setProjectOverride(null)
             setManualLabelNames([])
           }}
-          className="ml-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)] transition-colors"
+          className="ml-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)] transition-colors"
           title="Open full editor"
         >
           <Plus size={16} />

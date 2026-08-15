@@ -66,7 +66,7 @@ export function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activeDate, setActiveDate] = useState<Date | null>(null)
 
-  const { installPrompt, promptInstall } = usePwa()
+  const { installPrompt, promptInstall, needRefresh, updateServiceWorker } = usePwa()
   const [dismissedInstall, setDismissedInstall] = useState(
     () => localStorage.getItem('zeotask_dismiss_install') === 'true'
   )
@@ -364,7 +364,7 @@ export function AppShell() {
         </div>
       </header>
 
-      {((installPrompt && !dismissedInstall) || showPushPrompt) && onHome && (
+      {((installPrompt && !dismissedInstall) || showPushPrompt || needRefresh) && onHome && (
         <div className="mb-6 rounded-[var(--radius-modal)] border border-[var(--hairline)] bg-[var(--surface)] p-4 shadow-sm transition-all">
           {installPrompt && !dismissedInstall ? (
             <div className="flex items-center justify-between gap-3">
@@ -387,6 +387,22 @@ export function AppShell() {
                   className="focus-ring flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)]"
                 >
                   <X size={14} />
+                </button>
+              </div>
+            </div>
+          ) : needRefresh ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-semibold text-[var(--ink)]">Update Available</h3>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">A new version of ZeoTask is ready to install.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void updateServiceWorker(true)}
+                  className="focus-ring whitespace-nowrap rounded-[var(--radius-control)] bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-95"
+                >
+                  Refresh now
                 </button>
               </div>
             </div>

@@ -26,6 +26,14 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     updateServiceWorker,
   } = useRegisterSW({
     immediate: true,
+    onRegistered(r) {
+      if (r) {
+        // Automatically check for updates every 24 hours
+        setInterval(() => {
+          r.update().catch(console.error)
+        }, 24 * 60 * 60 * 1000)
+      }
+    },
   })
 
   const [installPrompt, setInstallPrompt] = useState<any | null>(null)

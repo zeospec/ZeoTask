@@ -21,7 +21,7 @@ import type { NotificationSettings } from '../types/models'
 
 export function ProfilePage() {
   const { user, logout, updateDisplayName } = useAuth()
-  const { needRefresh, updateServiceWorker } = usePwa()
+  const { needRefresh, updateServiceWorker, installPrompt, promptInstall } = usePwa()
   const [nameDraft, setNameDraft] = useState(user?.displayName ?? '')
   const [editingName, setEditingName] = useState(false)
   const [nameBusy, setNameBusy] = useState(false)
@@ -357,6 +357,24 @@ export function ProfilePage() {
             <p className="mt-2 text-xs text-[var(--muted)]">{notifMsg}</p>
           )}
         </div>
+
+        {installPrompt && (
+          <div className="mt-4 border-t border-[var(--hairline)] pt-4">
+            <h3 className="text-sm font-semibold text-[var(--ink)]">App Installation</h3>
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              Install ZeoTask locally on your device for a native, standalone experience.
+            </p>
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => void promptInstall()}
+                className="focus-ring rounded-[var(--radius-control)] bg-[var(--accent)] px-3 py-2 text-sm text-white"
+              >
+                Install App
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="mt-4 border-t border-[var(--hairline)] pt-4">
           <h3 className="text-sm font-semibold text-[var(--ink)]">Shortcuts</h3>

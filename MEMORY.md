@@ -7,13 +7,12 @@ Durable knowledge for ZeoTask. Read at session start (see `AGENTS.md`).
 - **Name:** ZeoTask
 - **Path:** `/Users/zeospec/Dev/Code/ZeoTask`
 - **Purpose:** Personal solo **Donetick-faithful** tasks PWA on Firebase
-- **Context pack:** `.agent/` (self-contained; no prior chat required)
+- **Context pack:** Self-contained; no prior chat required
 - **Visual system:** Mineral forest green (UXMagic export). Plan: [`docs/plans/2026-08-13-001-visual-revamp-plan.md`](./docs/plans/2026-08-13-001-visual-revamp-plan.md). Live UI matches [`DESIGN.md`](./DESIGN.md).
 
 ## Locked direction (summary)
 
-Solo · Donetick-faithful UX · mineral forest green visual · optimistic Firestore mutations · PWA · Vite+React+TS+Tailwind · Google Auth · no Capacitor/Docker/Next.  
-Full table: `.agent/00-settled-decisions.md`.
+Solo · Donetick-faithful UX · mineral forest green visual · optimistic Firestore mutations · PWA · Vite+React+TS+Tailwind · Google Auth · no Capacitor/Docker/Next.
 
 ## Stack (as implemented)
 
@@ -68,3 +67,6 @@ npm run build
 - **2026-08-13:** PWA hardening: app-wide SW register, iOS meta/icons, maskable icon, font runtime cache, hosting SW headers, standalone redirect auth.
 - **2026-08-13:** Spec + plan for push (FCM digest/due/predue/overdue), Move to today, Quick Add label/menu/due fixes. Brand locked **ZeoTask**.
 - **2026-08-13:** Implemented Quick Add fixes, Move to today, Profile Reminders, FCM client/SW (`injectManifest`), Cloud Function scheduler.
+- **2026-08-15:** Fixed `dnd-kit` collision detection in CalendarView using `pointerWithin` for precise drag-and-drop. Added single-key shortcuts (`a`, `w`, `m`) for quick view switching.
+- **2026-08-15:** Integrated Project and Label management directly into the Sidebar using hover menus (`...`) and `EntityManageModal`. Projects support custom colors; Labels do not. Removed redundant label settings from Profile.
+- **2026-08-15:** Enhanced PWA behavior: added a permanent "Install App" block in Profile settings (for deferred installations) and a global "Update Available" banner in `AppShell` (tied to `vite-plugin-pwa`'s `needRefresh`) to seamlessly force SW updates without manual cache clearing.

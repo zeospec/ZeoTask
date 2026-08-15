@@ -1,0 +1,900 @@
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { format, isTomorrow, isToday } from 'date-fns'
+import { DueDatePicker } from './DueDatePicker'
+import { Check, Plus, X } from './icons'
+import { RichDescriptionEditor } from './RichDescriptionEditor'
+import { SmartTaskTitleInput } from './SmartTaskTitleInput'
+import { useAuth } from '../hooks/useAuth'
+import { useChores } from '../hooks/useChores'
+import { useLabels } from '../hooks/useLabels'
+import { ensureLabelIds } from '../lib/labels'
+import {
+  formatPreviewDue,
+  previewNextDue,
+  recurrenceSummary,
+} from '../lib/scheduler'
+import {
+  parseSmartTitle,
+  type SmartParseResult,
+} from '../lib/taskParsers'
+import type { Chore, Frequency, Priority, Subtask } from '../types/models'
+
+type Props = {
+  open: boolean
+  editing: Chore | null
+  initialDue?: Date
+  onClose: () => void
+  onSaved: () => void
+  onDeleted?: () => void
+}
+
+const freqOptions: Array<{ value: Frequency; label: string }> = [
+  { value: 'once', label: 'Does not repeat' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'yearly', label: 'Yearly' },
+]
+
+const priorityOptions: Array<{ value: Priority; label: string }> = [
+  { value: 0, label: 'No priority' },
+  { value: 1, label: 'P1 Urgent' },
+  { value: 2, label: 'P2 High' },
+  { value: 3, label: 'P3 Medium' },
+  { value: 4, label: 'P4 Low' },
+]
+
+const WEEKDAYS = [
+  { d: 0, label: 'S' },
+  { d: 1, label: 'M' },
+  { d: 2, label: 'T' },
+  { d: 3, label: 'W' },
+  { d: 4, label: 'T' },
+  { d: 5, label: 'F' },
+  { d: 6, label: 'S' },
+]
+
+export function CreateTaskModal({ open, editing, initialDue, onClose, onSaved, onDeleted }: Props) {
+  const { user } = useAuth()
+  const { createTask, updateTask, deleteTask } = useChores()
+  const { labels } = useLabels()
+  const panelRef = useRef<HTMLDivElement>(null)
+  const subInputRef = useRef<HTMLInputElement>(null)
+  const [rawTitle, setRawTitle] = useState('')
+  const [parsed, setParsed] = useState<SmartParseResult>(() => parseSmartTitle(''))
+  const [ignoredTokens, setIgnoredTokens] = useState<string[]>([])
+  const [dueOverride, setDueOverride] = useState<Date | null | undefined>(undefined)
+  const [freqOverride, setFreqOverride] = useState<Frequency | undefined>(undefined)
+  const [prioOverride, setPrioOverride] = useState<Priority | undefined>(undefined)
+  const [repeatEvery, setRepeatEvery] = useState(1)
+  const [repeatWeekdays, setRepeatWeekdays] = useState<number[]>([])
+  /** Labels added via the Labels menu (not from live title NLP). */
+  const [manualLabelNames, setManualLabelNames] = useState<string[]>([])
+  /** NLP labels the user explicitly turned off in the Labels menu. */
+  const [excludedLabelNames, setExcludedLabelNames] = useState<string[]>([])
+  const [description, setDescription] = useState('')
+  const [subtasks, setSubtasks] = useState<Subtask[]>([])
+  const [subDraft, setSubDraft] = useState('')
+  const [dueOpen, setDueOpen] = useState(false)
+  const [repeatOpen, setRepeatOpen] = useState(false)
+  const [priorityOpen, setPriorityOpen] = useState(false)
+  const [labelsOpen, setLabelsOpen] = useState(false)
+  const [labelDraft, setLabelDraft] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [focusNotes, setFocusNotes] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [session, setSession] = useState(0)
+  const isEdit = Boolean(editing)
+
+  const reset = useCallback(() => {
+    setRawTitle('')
+    setIgnoredTokens([])
+    setParsed(parseSmartTitle(''))
+    setDueOverride(undefined)
+    setFreqOverride(undefined)
+    setPrioOverride(undefined)
+    setRepeatEvery(1)
+    setRepeatWeekdays([])
+    setManualLabelNames([])
+    setExcludedLabelNames([])
+    setDescription('')
+    setSubtasks([])
+    setSubDraft('')
+    setDueOpen(false)
+    setRepeatOpen(false)
+    setPriorityOpen(false)
+    setLabelsOpen(false)
+    setError(null)
+    setFocusNotes(false)
+    setConfirmDelete(false)
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    setSession((s) => s + 1)
+    setFocusNotes(false)
+    if (editing) {
+      setRawTitle(editing.title)
+      setIgnoredTokens([])
+      setParsed(parseSmartTitle(editing.title))
+      setDueOverride(undefined)
+      setFreqOverride(undefined)
+      setPrioOverride(undefined)
+      setRepeatEvery(editing.repeatEvery || 1)
+      setRepeatWeekdays(editing.repeatWeekdays || [])
+      setDescription(editing.description)
+      setSubtasks(editing.subtasks)
+      setManualLabelNames(
+        editing.labelIds
+          .map((id) => labels.find((l) => l.id === id)?.name)
+          .filter(Boolean) as string[],
+      )
+      setExcludedLabelNames([])
+      setError(null)
+    } else {
+      reset()
+      if (initialDue) {
+        setDueOverride(initialDue)
+      }
+    }
+  }, [open, editing, initialDue, reset, labels])
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault()
+        void submit()
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e') {
+        e.preventDefault()
+        setFocusNotes(true)
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
+        e.preventDefault()
+        subInputRef.current?.focus()
+      }
+      if (e.key === 'Tab' && panelRef.current) {
+        const focusable = panelRef.current.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
+        )
+        if (focusable.length === 0) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    open,
+    onClose,
+    rawTitle,
+    dueOverride,
+    freqOverride,
+    prioOverride,
+    manualLabelNames,
+    description,
+    subtasks,
+    repeatEvery,
+    repeatWeekdays,
+  ])
+
+  const onParsed = useCallback((next: SmartParseResult) => {
+    setParsed(next)
+  }, [])
+
+  const labelNames = (() => {
+    const out: string[] = []
+    const excluded = new Set(excludedLabelNames.map((n) => n.toLowerCase()))
+    for (const name of [
+      ...manualLabelNames,
+      ...parsed.labelNames.filter((n) => !excluded.has(n.toLowerCase())),
+    ]) {
+      if (!out.some((n) => n.toLowerCase() === name.toLowerCase())) out.push(name)
+    }
+    return out
+  })()
+
+  const labelsPillText =
+    labelNames.length === 0
+      ? 'Labels'
+      : labelNames.length === 1
+        ? `#${labelNames[0]}`
+        : `${labelNames.length} labels`
+
+  const hasNlpDue = parsed.highlights.some((h) => h.kind === 'due')
+  const dueAt =
+    dueOverride !== undefined
+      ? dueOverride
+      : hasNlpDue
+        ? parsed.dueAt
+        : editing
+          ? (editing.dueAt ? new Date(editing.dueAt) : null)
+          : parsed.dueAt
+
+  const hasNlpPriority = parsed.highlights.some((h) => h.kind === 'priority')
+  const priority =
+    prioOverride !== undefined
+      ? prioOverride
+      : hasNlpPriority
+        ? parsed.priority
+        : editing
+          ? editing.priority
+          : parsed.priority
+
+  const hasNlpFreq = parsed.highlights.some((h) => h.kind === 'repeat')
+  const frequency =
+    freqOverride !== undefined
+      ? freqOverride
+      : hasNlpFreq
+        ? parsed.frequency
+        : editing
+          ? (editing.frequency === 'no_repeat' ? 'once' : editing.frequency)
+          : parsed.frequency
+
+  const nextPreview = previewNextDue(
+    {
+      dueAt: dueAt?.toISOString() ?? null,
+      isRolling: true,
+      frequency,
+      repeatEvery,
+      repeatWeekdays,
+    },
+    dueAt ?? new Date(),
+  )
+
+  function addSubtask() {
+    const t = subDraft.trim()
+    if (!t) return
+    setSubtasks((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), title: t, completed: false },
+    ])
+    setSubDraft('')
+    requestAnimationFrame(() => subInputRef.current?.focus())
+  }
+
+  async function submit() {
+    if (!user) return
+    const latest = parseSmartTitle(rawTitle)
+    const title =
+      (isEdit ? rawTitle : latest.cleanedTitle).trim() || latest.cleanedTitle.trim()
+    if (!title) {
+      setError('Type a task name')
+      return
+    }
+    setError(null)
+    const freq = freqOverride ?? latest.frequency
+    let labelIds: string[] = []
+    try {
+      labelIds = await ensureLabelIds(user.uid, labelNames, [...labels])
+    } catch {
+      setError('Could not save labels')
+      return
+    }
+
+    const payload = {
+      title,
+      description,
+      frequency: freq,
+      isRolling: true as const,
+      priority,
+      dueAt: dueAt?.toISOString() ?? null,
+      labelIds,
+      subtasks,
+      repeatEvery: freq === 'once' || freq === 'no_repeat' ? 1 : Math.max(1, repeatEvery),
+      repeatWeekdays: freq === 'weekly' ? repeatWeekdays : [],
+    }
+
+    if (editing) {
+      updateTask(editing.id, { ...payload, archivedAt: null })
+    } else {
+      createTask(payload)
+    }
+    reset()
+    onSaved()
+  }
+
+  if (!open) return null
+
+  const doneCount = subtasks.filter((s) => s.completed).length
+  const primaryLabel = (() => {
+    if (isEdit) return 'Save'
+    if (dueAt && isTomorrow(dueAt)) return 'Add to tomorrow'
+    if (dueAt && isToday(dueAt)) return 'Add to today'
+    if (dueAt) return `Add · ${format(dueAt, 'MMM d')}`
+    return 'Add task'
+  })()
+
+  function handleDelete() {
+    if (!editing) return
+    deleteTask(editing.id, editing.title)
+    reset()
+    onDeleted?.()
+    onSaved()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-[var(--ink)]/35 p-3 sm:items-center">
+      <button type="button" className="absolute inset-0" aria-label="Close" onClick={onClose} />
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-task-title"
+        className="modal-panel relative z-10 flex max-h-[92dvh] w-full max-w-xl flex-col overflow-hidden rounded-[var(--radius-modal)] border border-[var(--hairline)] bg-[var(--surface)]"
+      >
+        <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-2">
+          <div className="min-w-0">
+            <p className="font-mono-meta text-[11px] uppercase tracking-widest text-[var(--muted)]">
+              {isEdit ? 'Edit' : 'Quick add'}
+            </p>
+            <h2
+              id="create-task-title"
+              className="mt-1 text-xl font-semibold tracking-tight text-[var(--ink)]"
+            >
+              {isEdit ? 'Update task' : 'What needs doing?'}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="focus-ring flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--muted)] hover:bg-[var(--quiet)]"
+            aria-label="Close"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="shrink-0 space-y-5 px-5 pt-3 pb-2">
+            <div>
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--quiet)] px-3.5 py-2.5">
+                <SmartTaskTitleInput
+                  key={`title-${session}`}
+                  value={rawTitle}
+                  onChange={setRawTitle}
+                  onParsed={onParsed}
+                  onSubmit={() => void submit()}
+                  autoFocus={!isEdit && !focusNotes}
+                  ignoredTokens={ignoredTokens}
+                />
+              </div>
+              {(dueAt ||
+                labelNames.length > 0 ||
+                priority > 0 ||
+                frequency !== 'once') && (
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
+                  {dueAt && (
+                    <span className="group flex items-center gap-1 rounded-full bg-[var(--accent-wash)] pl-2.5 pr-1.5 py-1 font-mono-meta text-[11px] text-[var(--accent)]">
+                      {format(dueAt, 'EEE, MMM d · h:mm a')}
+                      <button
+                        type="button"
+                        aria-label="Remove due date"
+                        className="rounded-full p-0.5 opacity-50 hover:bg-[var(--accent)] hover:text-white hover:opacity-100"
+                        onClick={() => {
+                          const h = parsed.highlights.find((x) => x.kind === 'due')
+                          if (h) setIgnoredTokens((p) => [...p, h.text])
+                          setDueOverride(null)
+                        }}
+                      >
+                        <X size={10} />
+                      </button>
+                    </span>
+                  )}
+                  {frequency !== 'once' && (
+                    <span className="group flex items-center gap-1 rounded-full bg-[var(--quiet)] pl-2.5 pr-1.5 py-1 text-[11px] text-[var(--ink)]">
+                      {recurrenceSummary(frequency, repeatEvery, repeatWeekdays)}
+                      <button
+                        type="button"
+                        aria-label="Remove repeat"
+                        className="rounded-full p-0.5 opacity-40 hover:bg-[var(--ink)] hover:text-white hover:opacity-100"
+                        onClick={() => {
+                          const h = parsed.highlights.find((x) => x.kind === 'repeat')
+                          if (h) setIgnoredTokens((p) => [...p, h.text])
+                          setFreqOverride('once')
+                        }}
+                      >
+                        <X size={10} />
+                      </button>
+                    </span>
+                  )}
+                  {priority > 0 && (
+                    <span className="group flex items-center gap-1 rounded-full bg-[var(--quiet)] pl-2.5 pr-1.5 py-1 font-mono-meta text-[11px] text-[var(--due-soon)]">
+                      P{priority}
+                      <button
+                        type="button"
+                        aria-label="Remove priority"
+                        className="rounded-full p-0.5 opacity-40 hover:bg-[var(--due-soon)] hover:text-white hover:opacity-100"
+                        onClick={() => {
+                          const h = parsed.highlights.find((x) => x.kind === 'priority')
+                          if (h) setIgnoredTokens((p) => [...p, h.text])
+                          setPrioOverride(0)
+                        }}
+                      >
+                        <X size={10} />
+                      </button>
+                    </span>
+                  )}
+                  {labelNames.map((n) => (
+                    <span
+                      key={n}
+                      className="group flex items-center gap-1 rounded-full bg-[var(--quiet)] pl-2.5 pr-1.5 py-1 font-mono-meta text-[11px] text-[var(--ink)]"
+                    >
+                      #{n}
+                      <button
+                        type="button"
+                        aria-label={`Remove label ${n}`}
+                        className="rounded-full p-0.5 opacity-40 hover:bg-[var(--ink)] hover:text-white hover:opacity-100"
+                        onClick={() => {
+                          const isManual = manualLabelNames.includes(n)
+                          if (isManual) {
+                            setManualLabelNames((p) => p.filter((x) => x !== n))
+                          } else {
+                            const h = parsed.highlights.find(
+                              (x) => x.kind === 'label' && x.text.toLowerCase() === `#${n}`.toLowerCase()
+                            )
+                            if (h) {
+                              setIgnoredTokens((p) => [...p, h.text])
+                            } else {
+                              setExcludedLabelNames((p) => [...p, n])
+                            }
+                          }
+                        }}
+                      >
+                        <X size={10} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-1.5 overflow-visible">
+              <div className="relative">
+                <Pill
+                  active={Boolean(dueAt)}
+                  onClick={() => {
+                    setDueOpen(true)
+                    setRepeatOpen(false)
+                    setPriorityOpen(false)
+                    setLabelsOpen(false)
+                  }}
+                >
+                  {dueAt ? format(dueAt, 'MMM d · h:mm a') : 'Due'}
+                </Pill>
+              </div>
+              <div className="relative">
+                <Pill
+                  active={frequency !== 'once'}
+                  onClick={() => {
+                    setRepeatOpen((v) => !v)
+                    setDueOpen(false)
+                    setPriorityOpen(false)
+                    setLabelsOpen(false)
+                  }}
+                >
+                  {frequency === 'once'
+                    ? 'Repeat'
+                    : recurrenceSummary(frequency, repeatEvery, repeatWeekdays)}
+                </Pill>
+                {repeatOpen && (
+                  <Menu onClose={() => setRepeatOpen(false)}>
+                    {freqOptions.map((opt) => (
+                      <MenuItem
+                        key={opt.value}
+                        active={frequency === opt.value}
+                        onClick={() => {
+                          setFreqOverride(opt.value)
+                          if (opt.value !== 'weekly') setRepeatWeekdays([])
+                        }}
+                      >
+                        {opt.label}
+                      </MenuItem>
+                    ))}
+                    {frequency !== 'once' && frequency !== 'no_repeat' && (
+                      <div className="border-t border-[var(--hairline)] px-3 py-2">
+                        <label className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                          Every
+                          <input
+                            type="number"
+                            min={1}
+                            max={99}
+                            value={repeatEvery}
+                            onChange={(e) =>
+                              setRepeatEvery(Math.max(1, Number(e.target.value) || 1))
+                            }
+                            className="w-14 rounded-lg border border-[var(--hairline)] px-2 py-1 text-sm text-[var(--ink)]"
+                          />
+                        </label>
+                        {frequency === 'weekly' && (
+                          <div className="mt-2 flex gap-1">
+                            {WEEKDAYS.map((w, i) => (
+                              <button
+                                key={`${w.d}-${i}`}
+                                type="button"
+                                onClick={() =>
+                                  setRepeatWeekdays((prev) =>
+                                    prev.includes(w.d)
+                                      ? prev.filter((x) => x !== w.d)
+                                      : [...prev, w.d].sort(),
+                                  )
+                                }
+                                className={[
+                                  'flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium',
+                                  repeatWeekdays.includes(w.d)
+                                    ? 'bg-[var(--accent)] text-white'
+                                    : 'bg-[var(--quiet)] text-[var(--muted)]',
+                                ].join(' ')}
+                              >
+                                {w.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {formatPreviewDue(nextPreview) && (
+                          <p className="mt-2 font-mono-meta text-[11px] text-[var(--muted)]">
+                            {formatPreviewDue(nextPreview)}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </Menu>
+                )}
+              </div>
+              <div className="relative">
+                <Pill
+                  active={priority > 0}
+                  onClick={() => {
+                    setPriorityOpen((v) => !v)
+                    setRepeatOpen(false)
+                    setDueOpen(false)
+                    setLabelsOpen(false)
+                  }}
+                >
+                  {priority > 0 ? `P${priority}` : 'Priority'}
+                </Pill>
+                {priorityOpen && (
+                  <Menu onClose={() => setPriorityOpen(false)}>
+                    {priorityOptions.map((opt) => (
+                      <MenuItem
+                        key={opt.value}
+                        active={priority === opt.value}
+                        onClick={() => {
+                          setPrioOverride(opt.value)
+                          setPriorityOpen(false)
+                        }}
+                      >
+                        {opt.label}
+                      </MenuItem>
+                    ))}
+                  </Menu>
+                )}
+              </div>
+              <div className="relative">
+                <Pill
+                  active={labelNames.length > 0}
+                  onClick={() => {
+                    setLabelsOpen((v) => !v)
+                    setRepeatOpen(false)
+                    setPriorityOpen(false)
+                    setDueOpen(false)
+                  }}
+                >
+                  {labelsPillText}
+                </Pill>
+                {labelsOpen && (
+                  <Menu onClose={() => setLabelsOpen(false)}>
+                    <form
+                      className="flex gap-2 p-1"
+                      onSubmit={(e) => {
+                        e.preventDefault()
+                        const name = labelDraft.replace(/^#/, '').trim()
+                        if (!name) return
+                        setManualLabelNames((prev) =>
+                          prev.some((n) => n.toLowerCase() === name.toLowerCase())
+                            ? prev
+                            : [...prev, name],
+                        )
+                        setLabelDraft('')
+                      }}
+                    >
+                      <input
+                        value={labelDraft}
+                        onChange={(e) => setLabelDraft(e.target.value)}
+                        placeholder="#home"
+                        className="min-w-0 flex-1 rounded-lg border border-[var(--hairline)] px-2 py-1.5 text-sm"
+                        autoFocus
+                      />
+                      <button
+                        type="submit"
+                        className="rounded-lg bg-[var(--accent)] px-2 py-1.5 text-sm text-white"
+                      >
+                        Add
+                      </button>
+                    </form>
+                    {labels.map((l) => (
+                      <MenuItem
+                        key={l.id}
+                        active={labelNames.some(
+                          (n) => n.toLowerCase() === l.name.toLowerCase(),
+                        )}
+                        onClick={() => {
+                          const active = labelNames.some(
+                            (n) => n.toLowerCase() === l.name.toLowerCase(),
+                          )
+                          if (active) {
+                            setManualLabelNames((prev) =>
+                              prev.filter(
+                                (n) => n.toLowerCase() !== l.name.toLowerCase(),
+                              ),
+                            )
+                            setExcludedLabelNames((prev) =>
+                              prev.some(
+                                (n) => n.toLowerCase() === l.name.toLowerCase(),
+                              )
+                                ? prev
+                                : [...prev, l.name],
+                            )
+                          } else {
+                            setExcludedLabelNames((prev) =>
+                              prev.filter(
+                                (n) => n.toLowerCase() !== l.name.toLowerCase(),
+                              ),
+                            )
+                            setManualLabelNames((prev) =>
+                              prev.some(
+                                (n) => n.toLowerCase() === l.name.toLowerCase(),
+                              )
+                                ? prev
+                                : [...prev, l.name],
+                            )
+                          }
+                        }}
+                      >
+                        #{l.name}
+                      </MenuItem>
+                    ))}
+                  </Menu>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 pb-3">
+            <div>
+              <p className="mb-1.5 text-[12px] font-medium text-[var(--muted)]">Notes</p>
+              <div className="rounded-[var(--radius-control)] border border-[var(--hairline)] px-3 py-2">
+                <RichDescriptionEditor
+                  key={`notes-${session}-${focusNotes ? 'f' : 'n'}`}
+                  value={description}
+                  onChange={setDescription}
+                  autoFocus={focusNotes}
+                  bare
+                  placeholder="Optional details…"
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 flex items-baseline justify-between">
+                <p className="text-[12px] font-medium text-[var(--muted)]">Checklist</p>
+                {subtasks.length > 0 && (
+                  <span className="font-mono-meta text-[11px] text-[var(--muted)]">
+                    {doneCount} / {subtasks.length}
+                  </span>
+                )}
+              </div>
+              <ul className="space-y-0.5">
+                {subtasks.map((s) => (
+                  <li key={s.id} className="group flex min-h-11 items-center gap-3">
+                    <button
+                      type="button"
+                      aria-label={s.completed ? 'Mark incomplete' : 'Mark complete'}
+                      onClick={() =>
+                        setSubtasks((prev) =>
+                          prev.map((x) =>
+                            x.id === s.id ? { ...x, completed: !x.completed } : x,
+                          ),
+                        )
+                      }
+                      className={[
+                        'focus-ring flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2',
+                        s.completed
+                          ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
+                          : 'border-[var(--hairline)]',
+                      ].join(' ')}
+                    >
+                      {s.completed && <Check size={12} />}
+                    </button>
+                    <span
+                      className={[
+                        'min-w-0 flex-1 text-[15px]',
+                        s.completed
+                          ? 'text-[var(--muted)] line-through'
+                          : 'text-[var(--ink)]',
+                      ].join(' ')}
+                    >
+                      {s.title}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Remove"
+                      className="rounded p-1 text-[var(--muted)] opacity-0 hover:text-[var(--danger)] group-hover:opacity-100"
+                      onClick={() =>
+                        setSubtasks((prev) => prev.filter((x) => x.id !== s.id))
+                      }
+                    >
+                      <X size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <form
+                className="mt-1 flex min-h-11 items-center gap-3"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  addSubtask()
+                }}
+              >
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center text-[var(--accent)]">
+                  <Plus size={16} />
+                </span>
+                <input
+                  ref={subInputRef}
+                  value={subDraft}
+                  onChange={(e) => setSubDraft(e.target.value)}
+                  placeholder="Add checklist item"
+                  data-gramm="false"
+                  className="min-w-0 flex-1 border-0 bg-transparent py-2 text-[15px] text-[var(--ink)] outline-none placeholder:text-[var(--muted)]"
+                />
+              </form>
+            </div>
+
+          {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 border-t border-[var(--hairline)] px-5 py-3">
+          {isEdit &&
+            (confirmDelete ? (
+              <>
+                <button
+                  type="button"
+                  className="focus-ring rounded-lg px-3 py-2 text-sm text-[var(--muted)] hover:bg-[var(--quiet)]"
+                  onClick={() => setConfirmDelete(false)}
+                >
+                  Keep
+                </button>
+                <button
+                  type="button"
+                  className="focus-ring rounded-lg bg-[var(--danger)] px-3 py-2 text-sm text-white"
+                  onClick={handleDelete}
+                >
+                  Delete
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="focus-ring rounded-lg px-3 py-2 text-sm text-[var(--danger)] hover:bg-red-50"
+                onClick={() => setConfirmDelete(true)}
+              >
+                Delete
+              </button>
+            ))}
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="focus-ring rounded-lg px-3 py-2 text-sm text-[var(--muted)] hover:bg-[var(--quiet)]"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!rawTitle.trim()}
+              onClick={() => void submit()}
+              className="focus-ring inline-flex min-h-10 items-center rounded-[var(--radius-control)] bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--accent-pressed)] disabled:opacity-40"
+            >
+              {primaryLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {dueOpen && (
+        <DueDatePicker
+          value={dueAt}
+          onClose={() => setDueOpen(false)}
+          onApply={(date) => {
+            setDueOverride(date)
+            setDueOpen(false)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+
+function Pill({
+  children,
+  active,
+  onClick,
+}: {
+  children: ReactNode
+  active?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'rounded-full border px-2.5 py-1 text-[13px] transition',
+        active
+          ? 'border-[var(--accent)]/30 bg-[var(--accent-wash)] text-[var(--ink)]'
+          : 'border-[var(--hairline)] bg-[var(--surface)] text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)]',
+      ].join(' ')}
+    >
+      {children}
+    </button>
+  )
+}
+
+function Menu({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  return (
+    <>
+      <button
+        type="button"
+        className="fixed inset-0 z-10 cursor-default bg-transparent"
+        onClick={(e) => {
+          e.stopPropagation()
+          onClose()
+        }}
+        aria-label="Close menu"
+      />
+      <div className="absolute top-full left-0 z-20 mt-2 w-64 rounded-[10px] border border-[var(--hairline)] bg-[var(--surface)] p-1 shadow-sm">
+        {children}
+      </div>
+    </>
+  )
+}
+
+function MenuItem({
+  children,
+  onClick,
+  active,
+}: {
+  children: ReactNode
+  onClick: () => void
+  active?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'block w-full rounded-lg px-3 py-2 text-left text-sm',
+        active
+          ? 'bg-[var(--accent-wash)] font-medium text-[var(--ink)]'
+          : 'text-[var(--ink)]/80 hover:bg-[var(--quiet)]',
+      ].join(' ')}
+    >
+      {children}
+    </button>
+  )
+}

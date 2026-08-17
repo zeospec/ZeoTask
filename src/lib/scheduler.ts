@@ -196,11 +196,11 @@ export function groupChores(chores: Chore[]) {
   const byDue = (a: Chore, b: Chore) => {
     if (!a.dueAt) return 1
     if (!b.dueAt) return -1
-    return a.dueAt.localeCompare(b.dueAt)
+    return String(a.dueAt || '').localeCompare(String(b.dueAt || ''))
   }
   for (const key of bucketOrder) {
     if (key === 'anytime') {
-      groups[key].sort((a, b) => (a.title || '').localeCompare(b.title || ''))
+      groups[key].sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')))
     } else {
       groups[key].sort(byDue)
     }

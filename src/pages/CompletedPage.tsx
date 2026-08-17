@@ -17,7 +17,7 @@ export function CompletedPage() {
     () =>
       chores
         .filter((c) => c.archivedAt)
-        .sort((a, b) => (b.archivedAt ?? '').localeCompare(a.archivedAt ?? '')),
+        .sort((a, b) => String(b.archivedAt || '').localeCompare(String(a.archivedAt || ''))),
     [chores],
   )
 

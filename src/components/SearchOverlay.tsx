@@ -39,7 +39,7 @@ export function SearchOverlay({ open, onClose, onSelect }: Props) {
     const query = q.trim().toLowerCase()
     if (!query) {
       return [...openTasks]
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
         .slice(0, 12)
     }
     return openTasks.filter((c) => {

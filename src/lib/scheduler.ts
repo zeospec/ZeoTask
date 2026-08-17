@@ -200,7 +200,7 @@ export function groupChores(chores: Chore[]) {
   }
   for (const key of bucketOrder) {
     if (key === 'anytime') {
-      groups[key].sort((a, b) => a.title.localeCompare(b.title))
+      groups[key].sort((a, b) => (a.title || '').localeCompare(b.title || ''))
     } else {
       groups[key].sort(byDue)
     }

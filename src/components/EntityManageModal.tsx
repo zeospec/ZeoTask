@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { PROJECT_COLORS } from '../lib/projects'
 import { X } from './icons'
@@ -26,7 +26,6 @@ export function EntityManageModal({
   const [color, setColor] = useState(initialColor || PROJECT_COLORS[0])
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [useCustomColor, setUseCustomColor] = useState(false)
-  const colorInputRef = useRef<HTMLInputElement>(null)
 
   // Reset state when modal opens
   useEffect(() => {
@@ -123,46 +122,44 @@ export function EntityManageModal({
                     />
                   ))}
 
-                  {/* Custom color button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUseCustomColor(true)
-                      // Small delay so the hidden input renders before we click it
-                      setTimeout(() => colorInputRef.current?.click(), 50)
-                    }}
-                    className={`relative flex h-8 w-8 items-center justify-center rounded-full border-2 transition-transform hover:scale-110 ${
-                      useCustomColor ? 'border-[var(--ink)] scale-110' : 'border-[var(--hairline)]'
-                    }`}
-                    style={useCustomColor ? { backgroundColor: color } : {
-                      background: 'conic-gradient(from 0deg, #f44, #f90, #ff0, #0b0, #09f, #90f, #f44)',
-                    }}
-                    aria-label="Pick a custom color"
-                  >
-                    {/* Hidden native color picker */}
-                    <input
-                      ref={colorInputRef}
-                      type="color"
-                      value={color}
-                      onChange={(e) => {
-                        setColor(e.target.value)
-                        setUseCustomColor(true)
-                      }}
-                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                      tabIndex={-1}
-                    />
-                  </button>
                 </div>
 
-                {/* Live preview of selected color */}
-                <div className="mt-3 flex items-center gap-2">
-                  <span
-                    className="inline-block h-3 w-3 rounded-full"
-                    style={{ backgroundColor: color }}
-                  />
-                  <span className="text-xs font-mono text-[var(--muted)] uppercase">
-                    {color}
-                  </span>
+                {/* Custom Hex Code Input */}
+                <div className="mt-4">
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
+                    Custom Hex Code
+                  </label>
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3 flex items-center justify-center">
+                      <div className="relative h-5 w-5 overflow-hidden rounded-full border border-[var(--hairline)] shadow-sm">
+                        <input
+                          type="color"
+                          value={color}
+                          onChange={(e) => {
+                            setColor(e.target.value)
+                            setUseCustomColor(true)
+                          }}
+                          className="absolute -inset-2 h-10 w-10 cursor-pointer border-0 p-0"
+                          title="Choose custom color"
+                        />
+                      </div>
+                    </div>
+                    <input
+                      type="text"
+                      value={color}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        setColor(val)
+                        if (!PROJECT_COLORS.includes(val.toUpperCase())) {
+                          setUseCustomColor(true)
+                        } else {
+                          setUseCustomColor(false)
+                        }
+                      }}
+                      className="w-full rounded-[var(--radius-control)] border border-[var(--line)] bg-transparent py-2 pl-10 pr-3 text-sm font-mono uppercase text-[var(--ink)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                      placeholder="#000000"
+                    />
+                  </div>
                 </div>
               </div>
             )}

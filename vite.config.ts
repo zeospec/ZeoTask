@@ -4,12 +4,6 @@ import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
-  // Allow Google Auth popup to talk back to the opener (Chrome COOP).
-  server: {
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
-    },
-  },
   plugins: [
     react(),
     tailwindcss(),

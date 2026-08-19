@@ -157,9 +157,24 @@ export function AppShell() {
         e.preventDefault()
         openCreate()
       }
-      if (!typing && (e.key === 'c' || e.key === 'n') && !e.metaKey && !e.ctrlKey) {
+      if (!typing && e.key === '/') {
+        e.preventDefault()
+        setSearchOpen(true)
+        return
+      }
+
+      if (!typing && e.key.toLowerCase() === 'h') {
+        e.preventDefault()
+        setActiveProjectId(null)
+        setActiveFilter(null)
+        setViewMode('agenda')
+        return
+      }
+
+      if (!typing && (e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'n') && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
         openCreate()
+        return
       }
       
       // View mode shortcuts

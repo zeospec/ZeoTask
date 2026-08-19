@@ -140,6 +140,37 @@ export function CalendarView({
   const prevWeek = () => setSelectedDate(subDays(selectedDate, 7))
   const nextWeek = () => setSelectedDate(addDays(selectedDate, 7))
 
+  // Keyboard shortcuts (T = Today, J = Next, K = Prev)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const typing =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+
+      if (typing || e.metaKey || e.ctrlKey) return
+
+      if (e.key.toLowerCase() === 't') {
+        e.preventDefault()
+        const now = new Date()
+        setSelectedDate(now)
+        setCurrentMonth(startOfMonth(now))
+      } else if (e.key.toLowerCase() === 'j') {
+        e.preventDefault()
+        if (mode === 'week') nextWeek()
+        else nextMonth()
+      } else if (e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        if (mode === 'week') prevWeek()
+        else prevMonth()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [mode, selectedDate, currentMonth])
+
   const days = useMemo(() => {
     if (mode === 'week') {
       const start = startOfWeek(selectedDate)

@@ -11,14 +11,17 @@ type Highlight = {
 type Props = {
   value: string
   onChange: (value: string) => void
-  onParsed: (parsed: SmartParseResult) => void
+  onParsed?: (parsed: SmartParseResult) => void
   onSubmit: () => void
+  onEscape?: () => void
   placeholder?: string
   autoFocus?: boolean
   ignoredTokens?: string[]
   onAtTrigger?: (active: boolean, query: string) => void
   onHashTrigger?: (active: boolean, query: string) => void
   highlights?: Highlight[]
+  className?: string
+  inputRef?: React.RefObject<HTMLDivElement | null>
 }
 
 // Retrieves absolute character offset of the caret within a contentEditable node.
@@ -118,19 +121,24 @@ export function SmartTaskTitleInput({
   onChange,
   onParsed,
   onSubmit,
+  onEscape,
   placeholder = 'e.g., Team meeting tomorrow 10am #work P1',
   autoFocus = true,
   ignoredTokens = [],
   onAtTrigger,
   onHashTrigger,
   highlights = [],
+  className,
+  inputRef,
 }: Props) {
   const inputId = useId()
-  const editorRef = useRef<HTMLDivElement>(null)
+  const localRef = useRef<HTMLDivElement>(null)
+  const editorRef = inputRef || localRef
   const isComposing = useRef(false)
 
   // Parse debounced so we don't block typing thread heavily
   useEffect(() => {
+    if (!onParsed) return
     const handle = window.setTimeout(() => {
       onParsed(parseSmartTitle(value, ignoredTokens))
     }, 60)
@@ -208,6 +216,8 @@ export function SmartTaskTitleInput({
     if (e.key === 'Enter') {
       e.preventDefault()
       onSubmit()
+    } else if (e.key === 'Escape') {
+      onEscape?.()
     }
   }
 
@@ -234,7 +244,10 @@ export function SmartTaskTitleInput({
           handleInput()
         }}
         data-placeholder={placeholder}
-        className="box-border w-full min-h-[1.75rem] border-0 bg-transparent px-0 py-0.5 text-lg font-medium leading-7 text-[var(--ink)] outline-none whitespace-pre-wrap break-words empty:before:content-[attr(data-placeholder)] empty:before:text-[var(--muted)] empty:before:font-normal empty:before:pointer-events-none"
+        className={
+          className ||
+          'box-border w-full min-h-[1.75rem] border-0 bg-transparent px-0 py-0.5 text-lg font-medium leading-7 text-[var(--ink)] outline-none whitespace-pre-wrap break-words empty:before:content-[attr(data-placeholder)] empty:before:text-[var(--muted)] empty:before:font-normal empty:before:pointer-events-none'
+        }
         aria-label="Task title"
         spellCheck={false}
       />

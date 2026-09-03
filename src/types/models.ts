@@ -15,6 +15,7 @@ export interface Subtask {
   title: string
   completed: boolean
   parentId?: string | null
+  dueAt?: string | null
 }
 
 export interface Chore {
@@ -39,6 +40,11 @@ export interface Chore {
   createdAt: string
   updatedAt: string
   lastCompletedAt: string | null
+  /** Subtask list metadata when chore represents a checklist item in task lists */
+  isSubtask?: boolean
+  parentChoreId?: string
+  parentChoreTitle?: string
+  subtaskId?: string
 }
 
 export interface Label {

@@ -48,6 +48,15 @@ export function ChoreRow({
         onClick={onOpen}
         className="min-w-0 flex-1 text-left"
       >
+        {chore.isSubtask && chore.parentChoreTitle && (
+          <div className="mb-1 flex items-center gap-1.5 font-mono-meta text-[11px] text-[var(--muted)]">
+            <svg className="shrink-0 text-[var(--accent)]" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+            <span className="truncate max-w-[240px] font-medium text-[var(--ink)]/80">{chore.parentChoreTitle}</span>
+            <span className="rounded bg-[var(--quiet)] px-1 py-0.2 text-[9.5px] uppercase tracking-wider text-[var(--muted)]">Checklist</span>
+          </div>
+        )}
         <h3 className="text-[15.5px] font-medium leading-[22px] text-[var(--ink)]">
           {chore.title}
         </h3>
@@ -96,12 +105,15 @@ export function ChoreRow({
             </span>
           )}
           {chore.subtasks.length > 0 && (
-            <div className="flex items-center gap-1.5 ml-1">
-              <svg className="text-[var(--muted)]" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-              <div className="h-1 w-12 overflow-hidden rounded-full bg-[var(--hairline)]">
+            <div className="flex items-center gap-1.5 ml-0.5">
+              <svg className="text-[var(--muted)]" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+              <span className="font-mono-meta text-[11px] leading-[18px] text-[var(--muted)]">
+                {chore.subtasks.filter((s) => s.completed).length}/{chore.subtasks.length}
+              </span>
+              <div className="h-1 w-10 overflow-hidden rounded-full bg-[var(--hairline)]">
                 <div 
                   className="h-full bg-[var(--accent)] transition-all duration-500 ease-out"
-                  style={{ width: `${(chore.subtasks.filter(s => s.completed).length / chore.subtasks.length) * 100}%` }}
+                  style={{ width: `${(chore.subtasks.filter((s) => s.completed).length / chore.subtasks.length) * 100}%` }}
                 />
               </div>
             </div>

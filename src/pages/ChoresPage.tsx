@@ -6,6 +6,8 @@ import { useChores } from '../hooks/useChores'
 import { useLabels } from '../hooks/useLabels'
 import { useProjects } from '../hooks/useProjects'
 import { CalendarView } from '../components/CalendarView'
+import { EditSubtaskModal } from '../components/EditSubtaskModal'
+import { expandChoresWithSubtasks } from '../lib/chores'
 import { bucketOrder, bucketTitle, groupChores } from '../lib/scheduler'
 import type { Chore, ChoreBucket, Label } from '../types/models'
 
@@ -21,27 +23,81 @@ type ShellContext = {
 }
 
 export function ChoresPage() {
-  const { chores, ready, error, pendingIds, completeTask, moveOverdueToToday, updateTask } =
-    useChores()
+  const {
+    chores,
+    ready,
+    error,
+    pendingIds,
+    completeTask,
+    completeSubtask,
+    updateSubtaskItem,
+    deleteSubtaskItem,
+    moveOverdueToToday,
+    updateTask,
+  } = useChores()
   const { byId, labels } = useLabels()
   const { projects } = useProjects()
   const { openEdit, openCreate, activeFilter, activeProjectId, viewMode, setActiveDate } = useOutletContext<ShellContext>()
   const [collapsed, setCollapsed] = useState<Partial<Record<ChoreBucket, boolean>>>({})
   const [exiting, setExiting] = useState<Set<string>>(() => new Set())
   const [completing, setCompleting] = useState<Set<string>>(() => new Set())
-  
+  const [editingSubtask, setEditingSubtask] = useState<Chore | null>(null)
+
   const filteredChores = useMemo(() => {
-    return chores.filter((c) => {
+    const matched = chores.filter((c) => {
       const matchProject = !activeProjectId || c.projectId === activeProjectId
       const matchPriority = !activeFilter || activeFilter.priorities.length === 0 || activeFilter.priorities.includes(c.priority)
       const matchLabel = !activeFilter || activeFilter.labelIds.length === 0 || activeFilter.labelIds.some(id => c.labelIds.includes(id))
       return matchProject && matchPriority && matchLabel
     })
+    return expandChoresWithSubtasks(matched)
   }, [chores, activeFilter, activeProjectId])
 
   const groups = useMemo(() => groupChores(filteredChores), [filteredChores])
 
+  function handleOpen(chore: Chore) {
+    if (chore.isSubtask) {
+      setEditingSubtask(chore)
+    } else {
+      openEdit(chore)
+    }
+  }
+
+  function handleCalendarUpdate(id: string, updates: Partial<Chore>) {
+    if (id.startsWith('subtask:')) {
+      const parts = id.split(':')
+      const parentId = parts[1]
+      const subtaskId = parts[2]
+      if (parentId && subtaskId && updates.dueAt !== undefined) {
+        updateSubtaskItem(parentId, subtaskId, { dueAt: updates.dueAt })
+        return
+      }
+    }
+    updateTask(id, updates)
+  }
+
   function onComplete(chore: Chore) {
+    if (chore.isSubtask && chore.parentChoreId && chore.subtaskId) {
+      setCompleting((prev) => new Set(prev).add(chore.id))
+      window.setTimeout(() => {
+        setExiting((prev) => new Set(prev).add(chore.id))
+        window.setTimeout(() => {
+          completeSubtask(chore.parentChoreId!, chore.subtaskId!)
+          setExiting((prev) => {
+            const n = new Set(prev)
+            n.delete(chore.id)
+            return n
+          })
+          setCompleting((prev) => {
+            const n = new Set(prev)
+            n.delete(chore.id)
+            return n
+          })
+        }, 180)
+      }, 160)
+      return
+    }
+
     const isOnce =
       chore.frequency === 'once' || chore.frequency === 'no_repeat'
     setCompleting((prev) => new Set(prev).add(chore.id))
@@ -78,19 +134,40 @@ export function ChoresPage() {
   
   if (viewMode === 'month' || viewMode === 'week') {
     return (
-      <CalendarView
-        mode={viewMode}
-        chores={filteredChores}
-        onOpenEdit={openEdit}
-        onOpenCreate={openCreate}
-        onComplete={onComplete}
-        onUpdateTask={updateTask}
-        onActiveDateChange={setActiveDate}
-        pendingIds={pendingIds}
-        exiting={exiting}
-        completing={completing}
-        labelsById={byId}
-      />
+      <>
+        <CalendarView
+          mode={viewMode}
+          chores={filteredChores}
+          onOpenEdit={handleOpen}
+          onOpenCreate={openCreate}
+          onComplete={onComplete}
+          onUpdateTask={handleCalendarUpdate}
+          onActiveDateChange={setActiveDate}
+          pendingIds={pendingIds}
+          exiting={exiting}
+          completing={completing}
+          labelsById={byId}
+        />
+        <EditSubtaskModal
+          open={Boolean(editingSubtask)}
+          subtaskChore={editingSubtask}
+          onClose={() => setEditingSubtask(null)}
+          onSave={(subtaskId, updates) => {
+            if (editingSubtask?.parentChoreId) {
+              updateSubtaskItem(editingSubtask.parentChoreId, subtaskId, updates)
+            }
+          }}
+          onDelete={(subtaskId) => {
+            if (editingSubtask?.parentChoreId) {
+              deleteSubtaskItem(editingSubtask.parentChoreId, subtaskId)
+            }
+          }}
+          onOpenParent={(parentChoreId) => {
+            const parent = chores.find((c) => c.id === parentChoreId)
+            if (parent) openEdit(parent)
+          }}
+        />
+      </>
     )
   }
 
@@ -214,7 +291,7 @@ export function ChoresPage() {
                         pending={pendingIds.has(chore.id)}
                         exiting={exiting.has(chore.id)}
                         completing={completing.has(chore.id)}
-                        onOpen={() => openEdit(chore)}
+                        onOpen={() => handleOpen(chore)}
                         onComplete={() => onComplete(chore)}
                       />
                     ))}
@@ -225,6 +302,26 @@ export function ChoresPage() {
           })}
         </>
       )}
+
+      <EditSubtaskModal
+        open={Boolean(editingSubtask)}
+        subtaskChore={editingSubtask}
+        onClose={() => setEditingSubtask(null)}
+        onSave={(subtaskId, updates) => {
+          if (editingSubtask?.parentChoreId) {
+            updateSubtaskItem(editingSubtask.parentChoreId, subtaskId, updates)
+          }
+        }}
+        onDelete={(subtaskId) => {
+          if (editingSubtask?.parentChoreId) {
+            deleteSubtaskItem(editingSubtask.parentChoreId, subtaskId)
+          }
+        }}
+        onOpenParent={(parentChoreId) => {
+          const parent = chores.find((c) => c.id === parentChoreId)
+          if (parent) openEdit(parent)
+        }}
+      />
     </div>
   )
 }

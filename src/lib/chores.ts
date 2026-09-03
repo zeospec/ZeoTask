@@ -250,3 +250,80 @@ export function toggleSubtask(
     updatedAt: nowIso(),
   })
 }
+
+export function updateSubtask(
+  uid: string,
+  chore: Chore,
+  subtaskId: string,
+  updates: Partial<Subtask>,
+): Promise<void> {
+  const subtasks = chore.subtasks.map((s) =>
+    s.id === subtaskId ? { ...s, ...updates } : s,
+  )
+  return updateDoc(doc(choresCol(uid), chore.id), {
+    subtasks,
+    updatedAt: nowIso(),
+  })
+}
+
+export function deleteSubtask(
+  uid: string,
+  chore: Chore,
+  subtaskId: string,
+): Promise<void> {
+  const subtasks = chore.subtasks.filter((s) => s.id !== subtaskId)
+  return updateDoc(doc(choresCol(uid), chore.id), {
+    subtasks,
+    updatedAt: nowIso(),
+  })
+}
+
+/**
+ * Expands active chores to also include open checklist items as tasks in the task stream.
+ * Checklist items inherit parent task's project, labels, priority, and default due date (unless overridden).
+ */
+export function expandChoresWithSubtasks(chores: Chore[]): Chore[] {
+  const result: Chore[] = []
+  for (const chore of chores) {
+    if (chore.archivedAt) continue
+    result.push(chore)
+
+    if (chore.subtasks && chore.subtasks.length > 0) {
+      for (const subtask of chore.subtasks) {
+        if (subtask.completed) continue
+        const effectiveDueAt =
+          subtask.dueAt !== undefined && subtask.dueAt !== null
+            ? subtask.dueAt
+            : chore.dueAt
+
+        result.push({
+          id: `subtask:${chore.id}:${subtask.id}`,
+          title: subtask.title,
+          description: '',
+          priority: chore.priority,
+          status: 'none',
+          dueAt: effectiveDueAt,
+          isRolling: chore.isRolling,
+          frequency: 'once',
+          repeatEvery: 1,
+          repeatWeekdays: [],
+          labelIds: chore.labelIds,
+          projectId: chore.projectId,
+          subtasks: [],
+          reminderEnabled: false,
+          predueHours: 24,
+          archivedAt: null,
+          createdAt: chore.createdAt,
+          updatedAt: chore.updatedAt,
+          lastCompletedAt: null,
+          isSubtask: true,
+          parentChoreId: chore.id,
+          parentChoreTitle: chore.title,
+          subtaskId: subtask.id,
+        })
+      }
+    }
+  }
+  return result
+}
+

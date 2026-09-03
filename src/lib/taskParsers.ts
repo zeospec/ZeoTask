@@ -351,3 +351,27 @@ export function parseSmartTitle(input: string, ignoredTokens: string[] = []): Sm
     })),
   }
 }
+
+export type SubtaskParseResult = {
+  cleanedTitle: string
+  dueAt: Date | null
+  dueText?: string
+  highlights: TextHighlight[]
+}
+
+/** Parses natural language due dates for checklist items (e.g., "Buy milk tomorrow" -> { cleanedTitle: "Buy milk", dueAt: Date }) */
+export function parseSubtaskTitle(input: string): SubtaskParseResult {
+  const trimmed = input.trim()
+  if (!trimmed) {
+    return { cleanedTitle: '', dueAt: null, highlights: [] }
+  }
+  const result = parseSmartTitle(trimmed)
+  const dueHighlight = result.highlights.find((h) => h.kind === 'due')
+  return {
+    cleanedTitle: result.cleanedTitle || trimmed,
+    dueAt: result.dueAt,
+    dueText: dueHighlight?.text,
+    highlights: result.highlights,
+  }
+}
+

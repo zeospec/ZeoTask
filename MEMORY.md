@@ -125,5 +125,16 @@ npm run build
 - **2026-08-15:** Enhanced PWA behavior: added permanent "Install App" block in Profile and global "Update Available" banner.
 - **2026-08-15:** NLP overrides hardened: last-match-wins for priority/project/date; structured `CreateOverrides` flow from InlineQuickAdd → AppShell → CreateTaskModal; `reset()` preserves overrides; title stripping of `@project`/`#label` trigger tokens.
 - **2026-08-15:** EntityManageModal rewritten: portals to `document.body` (fixes sidebar transform clipping on mobile), bottom-sheet on mobile / centered modal on desktop, custom color picker via `<input type="color">`.
-- **2026-08-15:** Sidebar UX: edit buttons always visible (no hover-only), vertical triple-dot icon.
 - **2026-08-15:** Layout polish: sticky header with backdrop-blur mirroring bottom bar; send button (↑) in InlineQuickAdd appears when text is present.
+- **2026-09-03:** Checklist tasks as unified tasks:
+  - Added `dueAt?: string | null` to `Subtask`. Checklist items inherit parent `projectId`, `labelIds`, `priority`, and default to parent `dueAt`.
+  - Added `expandChoresWithSubtasks` to represent uncompleted checklist items alongside parent tasks in agenda buckets and calendar view with breadcrumb indicator (`↳ [parentTaskTitle]`).
+  - Added `EditSubtaskModal` for editing checklist item title, due date, completion, deletion, and linking to parent task.
+  - Overhauled checklist adding UI: explicit "Add" button, due date chip, visual flash/feedback animation, and input focus retention.
+  - Inline checklist editing in `CreateTaskModal` and `ChoreDetailPage`.
+  - Fixed mobile menu clipping in `CreateTaskModal`: `Menu` renders as a responsive bottom sheet on mobile (`fixed inset-x-0 bottom-0 z-[70] max-h-[75dvh]`) and right-clamped popover on desktop (`align="right"`).
+  - Added `{done}/{total}` numerical fraction text alongside progress bar in `ChoreRow`.
+  - Added NLP natural language due date parsing (`parseSubtaskTitle`) for checklists with live detected date indicators in `CreateTaskModal`, `ChoreDetailPage`, and `EditSubtaskModal`.
+  - Extended live NLP syntax highlighting to checklist items: upgraded `SmartTaskTitleInput` to support customizable typography, ref forwarding, escape handling, and rendered it across checklist draft inputs, inline edits, and edit modal.
+  - Implemented inline double confirmation when deleting checklist items across all surfaces (`CreateTaskModal`, `ChoreDetailPage`, `EditSubtaskModal`) to prevent accidental deletion.
+

@@ -18,7 +18,7 @@ import {
   type ChoreInput,
 } from '../lib/chores'
 import { moveDueToToday } from '../lib/scheduler'
-import type { Chore, ChoreCompleteSnapshot } from '../types/models'
+import type { Chore, ChoreCompleteSnapshot, Subtask } from '../types/models'
 import { useAuth } from './useAuth'
 
 export type ToastAction = {
@@ -49,6 +49,9 @@ type ChoresContextValue = {
   completeTask: (chore: Chore) => void
   deleteTask: (choreId: string, title?: string) => void
   moveOverdueToToday: (chores: Chore[]) => void
+  completeSubtask: (parentChoreId: string, subtaskId: string) => void
+  updateSubtaskItem: (parentChoreId: string, subtaskId: string, updates: Partial<Subtask>) => void
+  deleteSubtaskItem: (parentChoreId: string, subtaskId: string) => void
   runWrite: (choreId: string, promise: Promise<void>, failMessage: string) => void
 }
 
@@ -219,6 +222,80 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
     [announceLive, pushToast, runWrite, user],
   )
 
+  const completeSubtask = useCallback(
+    (parentChoreId: string, subtaskId: string) => {
+      if (!user) return
+      const parent = chores.find((c) => c.id === parentChoreId)
+      if (!parent) return
+      const sub = parent.subtasks.find((s) => s.id === subtaskId)
+      if (!sub) return
+
+      const prevSubtasks = parent.subtasks
+      const nextSubtasks = parent.subtasks.map((s) =>
+        s.id === subtaskId ? { ...s, completed: true } : s,
+      )
+
+      runWrite(
+        parentChoreId,
+        updateChoreWrite(user.uid, parentChoreId, { subtasks: nextSubtasks }),
+        'Could not complete checklist item',
+      )
+
+      announceLive(`Completed ${sub.title}`)
+      pushToast('Checklist item marked complete', {
+        label: 'Undo',
+        onClick: () => {
+          if (!user) return
+          runWrite(
+            parentChoreId,
+            updateChoreWrite(user.uid, parentChoreId, { subtasks: prevSubtasks }),
+            'Could not undo',
+          )
+          announceLive(`Undid complete for ${sub.title}`)
+        },
+      })
+    },
+    [announceLive, chores, pushToast, runWrite, user],
+  )
+
+  const updateSubtaskItem = useCallback(
+    (parentChoreId: string, subtaskId: string, updates: Partial<Subtask>) => {
+      if (!user) return
+      const parent = chores.find((c) => c.id === parentChoreId)
+      if (!parent) return
+
+      const nextSubtasks = parent.subtasks.map((s) =>
+        s.id === subtaskId ? { ...s, ...updates } : s,
+      )
+
+      runWrite(
+        parentChoreId,
+        updateChoreWrite(user.uid, parentChoreId, { subtasks: nextSubtasks }),
+        'Could not update checklist item',
+      )
+      announceLive('Checklist item updated')
+    },
+    [announceLive, chores, runWrite, user],
+  )
+
+  const deleteSubtaskItem = useCallback(
+    (parentChoreId: string, subtaskId: string) => {
+      if (!user) return
+      const parent = chores.find((c) => c.id === parentChoreId)
+      if (!parent) return
+
+      const nextSubtasks = parent.subtasks.filter((s) => s.id !== subtaskId)
+
+      runWrite(
+        parentChoreId,
+        updateChoreWrite(user.uid, parentChoreId, { subtasks: nextSubtasks }),
+        'Could not delete checklist item',
+      )
+      announceLive('Checklist item removed')
+    },
+    [announceLive, chores, runWrite, user],
+  )
+
   const value = useMemo<ChoresContextValue>(
     () => ({
       chores,
@@ -237,14 +314,19 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       completeTask,
       deleteTask,
       moveOverdueToToday,
+      completeSubtask,
+      updateSubtaskItem,
+      deleteSubtaskItem,
       runWrite,
     }),
     [
       announce,
       announceLive,
       chores,
+      completeSubtask,
       completeTask,
       createTask,
+      deleteSubtaskItem,
       deleteTask,
       dismissToast,
       error,
@@ -256,6 +338,7 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       runWrite,
       syncing,
       toasts,
+      updateSubtaskItem,
       updateTask,
     ],
   )

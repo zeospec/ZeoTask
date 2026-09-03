@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { format, isTomorrow, isToday } from 'date-fns'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { format, isTomorrow, isToday, parseISO } from 'date-fns'
 import { DueDatePicker } from './DueDatePicker'
-import { Check, Plus, X, Tag } from './icons'
+import { Check, Plus, X, Tag, Pencil, Trash, CalendarIcon } from './icons'
 import { RichDescriptionEditor } from './RichDescriptionEditor'
 import { SmartTaskTitleInput } from './SmartTaskTitleInput'
 import { useAuth } from '../hooks/useAuth'
@@ -16,6 +16,7 @@ import {
 } from '../lib/scheduler'
 import {
   parseSmartTitle,
+  parseSubtaskTitle,
   type SmartParseResult,
 } from '../lib/taskParsers'
 import type { Chore, Frequency, Priority, Subtask } from '../types/models'
@@ -64,7 +65,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
   const { labels, create: createLabel } = useLabels()
   const { projects, create: createProject } = useProjects()
   const panelRef = useRef<HTMLDivElement>(null)
-  const subInputRef = useRef<HTMLInputElement>(null)
+  const subEditorRef = useRef<HTMLDivElement>(null)
   const [rawTitle, setRawTitle] = useState(initialTitle || '')
   const [parsed, setParsed] = useState<SmartParseResult>(() => parseSmartTitle(initialTitle || ''))
   const [ignoredTokens, setIgnoredTokens] = useState<{text: string; kind: string}[]>(initialOverrides?.ignoredTokens || [])
@@ -81,6 +82,13 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
   const [description, setDescription] = useState('')
   const [subtasks, setSubtasks] = useState<Subtask[]>([])
   const [subDraft, setSubDraft] = useState('')
+  const [subDraftDue, setSubDraftDue] = useState<string | null>(null)
+  const [subDatePickerTarget, setSubDatePickerTarget] = useState<'draft' | string | null>(null)
+  const [recentlyAddedId, setRecentlyAddedId] = useState<string | null>(null)
+  const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null)
+  const [editingSubtaskTitle, setEditingSubtaskTitle] = useState('')
+  const [editingSubtaskDue, setEditingSubtaskDue] = useState<string | null>(null)
+  const [confirmDeleteSubtaskId, setConfirmDeleteSubtaskId] = useState<string | null>(null)
   const [dueOpen, setDueOpen] = useState(false)
   const [repeatOpen, setRepeatOpen] = useState(false)
   const [priorityOpen, setPriorityOpen] = useState(false)
@@ -113,6 +121,13 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
     setDescription('')
     setSubtasks([])
     setSubDraft('')
+    setSubDraftDue(null)
+    setSubDatePickerTarget(null)
+    setRecentlyAddedId(null)
+    setEditingSubtaskId(null)
+    setEditingSubtaskTitle('')
+    setEditingSubtaskDue(null)
+    setConfirmDeleteSubtaskId(null)
     setDueOpen(false)
     setRepeatOpen(false)
     setPriorityOpen(false)
@@ -170,7 +185,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
         e.preventDefault()
-        subInputRef.current?.focus()
+        subEditorRef.current?.focus()
       }
       if (e.key === 'Tab' && panelRef.current) {
         const focusable = panelRef.current.querySelectorAll<HTMLElement>(
@@ -289,15 +304,68 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
     ? projects.find((p) => p.id === finalProjectId)?.name
     : null
 
+  const subDraftNlp = useMemo(() => parseSubtaskTitle(subDraft), [subDraft])
+  const effectiveSubDraftDue =
+    subDraftDue ||
+    (subDraftNlp.dueAt ? subDraftNlp.dueAt.toISOString() : null)
+
+  const editingSubtaskNlp = useMemo(
+    () => parseSubtaskTitle(editingSubtaskTitle),
+    [editingSubtaskTitle],
+  )
+  const effectiveEditingSubtaskDue =
+    editingSubtaskDue ||
+    (editingSubtaskNlp.dueAt ? editingSubtaskNlp.dueAt.toISOString() : null)
+
   function addSubtask() {
     const t = subDraft.trim()
     if (!t) return
+    const parsed = parseSubtaskTitle(t)
+    const finalTitle = subDraftDue ? t : (parsed.cleanedTitle || t)
+    const finalDue =
+      subDraftDue || (parsed.dueAt ? parsed.dueAt.toISOString() : null)
+
+    const id = crypto.randomUUID()
     setSubtasks((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), title: t, completed: false },
+      { id, title: finalTitle, completed: false, dueAt: finalDue },
     ])
     setSubDraft('')
-    requestAnimationFrame(() => subInputRef.current?.focus())
+    setSubDraftDue(null)
+    setRecentlyAddedId(id)
+    window.setTimeout(() => setRecentlyAddedId(null), 1400)
+    requestAnimationFrame(() => subEditorRef.current?.focus())
+  }
+
+  function startEditSubtask(s: Subtask) {
+    setEditingSubtaskId(s.id)
+    setEditingSubtaskTitle(s.title)
+    setEditingSubtaskDue(s.dueAt || null)
+  }
+
+  function saveEditSubtask() {
+    if (!editingSubtaskId) return
+    const trimmed = editingSubtaskTitle.trim()
+    if (trimmed) {
+      const parsed = parseSubtaskTitle(trimmed)
+      const finalTitle = editingSubtaskDue
+        ? trimmed
+        : (parsed.cleanedTitle || trimmed)
+      const finalDue =
+        editingSubtaskDue ||
+        (parsed.dueAt ? parsed.dueAt.toISOString() : null)
+
+      setSubtasks((prev) =>
+        prev.map((x) =>
+          x.id === editingSubtaskId
+            ? { ...x, title: finalTitle, dueAt: finalDue }
+            : x,
+        ),
+      )
+    }
+    setEditingSubtaskId(null)
+    setEditingSubtaskTitle('')
+    setEditingSubtaskDue(null)
   }
 
   async function submit() {
@@ -719,7 +787,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
                     : recurrenceSummary(frequency, repeatEvery, repeatWeekdays)}
                 </Pill>
                 {repeatOpen && (
-                  <Menu onClose={() => setRepeatOpen(false)}>
+                  <Menu onClose={() => setRepeatOpen(false)} align="left">
                     {freqOptions.map((opt) => (
                       <MenuItem
                         key={opt.value}
@@ -796,7 +864,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
                   {priority > 0 ? `P${priority}` : 'Priority'}
                 </Pill>
                 {priorityOpen && (
-                  <Menu onClose={() => setPriorityOpen(false)}>
+                  <Menu onClose={() => setPriorityOpen(false)} align="left">
                     {priorityOptions.map((opt) => (
                       <MenuItem
                         key={opt.value}
@@ -826,7 +894,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
                   {labelsPillText}
                 </Pill>
                  {labelsOpen && (
-                  <Menu onClose={() => setLabelsOpen(false)}>
+                  <Menu onClose={() => setLabelsOpen(false)} align="right">
                     <form
                       className="flex gap-2 p-1.5"
                       onSubmit={(e) => {
@@ -919,7 +987,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
                   {activeProjectName ? `@${activeProjectName}` : 'Project'}
                 </Pill>
                 {projectsOpen && (
-                  <Menu onClose={() => { setProjectsOpen(false); setProjectSearch(''); }}>
+                  <Menu onClose={() => { setProjectsOpen(false); setProjectSearch(''); }} align="right">
                     <div className="p-1.5">
                       <input
                         value={projectSearch}
@@ -1012,69 +1080,220 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
                   </span>
                 )}
               </div>
-              <ul className="space-y-0.5">
-                {subtasks.map((s) => (
-                  <li key={s.id} className="group flex min-h-11 items-center gap-3">
-                    <button
-                      type="button"
-                      aria-label={s.completed ? 'Mark incomplete' : 'Mark complete'}
-                      onClick={() =>
-                        setSubtasks((prev) =>
-                          prev.map((x) =>
-                            x.id === s.id ? { ...x, completed: !x.completed } : x,
-                          ),
-                        )
-                      }
+              <ul className="space-y-1">
+                {subtasks.map((s) => {
+                  const isEditingThis = editingSubtaskId === s.id
+                  const sDate = s.dueAt ? parseISO(s.dueAt) : null
+
+                  if (isEditingThis) {
+                    return (
+                      <li key={s.id} className="rounded-lg border border-[var(--accent)]/40 bg-[var(--surface)] p-2 shadow-xs">
+                        <div className="flex items-center gap-2">
+                          <div className="min-w-0 flex-1 rounded-md border border-[var(--hairline)] bg-transparent focus-within:border-[var(--accent)]">
+                            <SmartTaskTitleInput
+                              value={editingSubtaskTitle}
+                              onChange={setEditingSubtaskTitle}
+                              onSubmit={saveEditSubtask}
+                              onEscape={() => setEditingSubtaskId(null)}
+                              highlights={editingSubtaskNlp.highlights}
+                              placeholder="Item name..."
+                              autoFocus
+                              className="box-border w-full border-0 bg-transparent px-2.5 py-1.5 text-sm text-[var(--ink)] outline-none min-h-[1.5rem] whitespace-pre-wrap break-words empty:before:content-[attr(data-placeholder)] empty:before:text-[var(--muted)] empty:before:font-normal empty:before:pointer-events-none"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setSubDatePickerTarget(s.id)}
+                            className={`flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs shrink-0 transition-colors ${
+                              effectiveEditingSubtaskDue
+                                ? 'border-[var(--accent)]/30 bg-[var(--accent-wash)] text-[var(--accent)] font-medium'
+                                : 'border-[var(--hairline)] text-[var(--muted)] hover:bg-[var(--quiet)]'
+                            }`}
+                            title={
+                              editingSubtaskNlp.dueAt && !editingSubtaskDue
+                                ? `Auto-detected from text: "${editingSubtaskNlp.dueText}"`
+                                : 'Set due date'
+                            }
+                          >
+                            <CalendarIcon size={13} />
+                            {effectiveEditingSubtaskDue
+                              ? format(parseISO(effectiveEditingSubtaskDue), 'MMM d')
+                              : 'Due date'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={saveEditSubtask}
+                            className="flex h-8 w-8 items-center justify-center rounded-md bg-[var(--accent)] text-white hover:bg-[var(--accent-pressed)] shrink-0"
+                            title="Save"
+                          >
+                            <Check size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingSubtaskId(null)}
+                            className="flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--quiet)] shrink-0"
+                            title="Cancel"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      </li>
+                    )
+                  }
+
+                  return (
+                    <li
+                      key={s.id}
                       className={[
-                        'focus-ring flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2',
-                        s.completed
-                          ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
-                          : 'border-[var(--hairline)]',
+                        'group flex min-h-10 items-center gap-2.5 rounded-lg px-1 py-1 transition-colors',
+                        recentlyAddedId === s.id
+                          ? 'bg-[var(--accent-wash)] ring-1 ring-[var(--accent)]/20'
+                          : 'hover:bg-[var(--quiet)]/50',
                       ].join(' ')}
                     >
-                      {s.completed && <Check size={12} />}
-                    </button>
-                    <span
-                      className={[
-                        'min-w-0 flex-1 text-[15px]',
-                        s.completed
-                          ? 'text-[var(--muted)] line-through'
-                          : 'text-[var(--ink)]',
-                      ].join(' ')}
-                    >
-                      {s.title}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label="Remove"
-                      className="rounded p-1 text-[var(--muted)] opacity-0 hover:text-[var(--danger)] group-hover:opacity-100"
-                      onClick={() =>
-                        setSubtasks((prev) => prev.filter((x) => x.id !== s.id))
-                      }
-                    >
-                      <X size={14} />
-                    </button>
-                  </li>
-                ))}
+                      <button
+                        type="button"
+                        aria-label={s.completed ? 'Mark incomplete' : 'Mark complete'}
+                        onClick={() =>
+                          setSubtasks((prev) =>
+                            prev.map((x) =>
+                              x.id === s.id ? { ...x, completed: !x.completed } : x,
+                            ),
+                          )
+                        }
+                        className={[
+                          'focus-ring flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors',
+                          s.completed
+                            ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
+                            : 'border-[var(--hairline)] hover:border-[var(--accent)]',
+                        ].join(' ')}
+                      >
+                        {s.completed && <Check size={10} />}
+                      </button>
+
+                      <div
+                        onClick={() => startEditSubtask(s)}
+                        className="min-w-0 flex-1 cursor-pointer py-1"
+                        title="Click to edit"
+                      >
+                        <span
+                          className={[
+                            'text-[14.5px] leading-5',
+                            s.completed
+                              ? 'text-[var(--muted)] line-through'
+                              : 'text-[var(--ink)]',
+                          ].join(' ')}
+                        >
+                          {s.title}
+                        </span>
+                        {sDate && (
+                          <span className="ml-2 inline-flex items-center gap-1 rounded bg-[var(--quiet)] px-1.5 py-0.5 font-mono-meta text-[10.5px] font-medium text-[var(--accent)]">
+                            <CalendarIcon size={10} />
+                            {isToday(sDate)
+                              ? 'Today'
+                              : isTomorrow(sDate)
+                              ? 'Tomorrow'
+                              : format(sDate, 'MMM d')}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        {confirmDeleteSubtaskId === s.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSubtasks((prev) => prev.filter((x) => x.id !== s.id))
+                                setConfirmDeleteSubtaskId(null)
+                              }}
+                              className="rounded bg-[var(--danger)] px-2 py-0.5 text-xs font-semibold text-white hover:bg-red-600 transition"
+                            >
+                              Delete
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteSubtaskId(null)}
+                              className="rounded px-1.5 py-0.5 text-xs text-[var(--muted)] hover:bg-[var(--quiet)]"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              aria-label="Edit checklist item"
+                              onClick={() => startEditSubtask(s)}
+                              className="flex h-7 w-7 items-center justify-center rounded text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)]"
+                            >
+                              <Pencil size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Remove checklist item"
+                              className="flex h-7 w-7 items-center justify-center rounded text-[var(--muted)] hover:bg-red-50 hover:text-[var(--danger)]"
+                              onClick={() => setConfirmDeleteSubtaskId(s.id)}
+                            >
+                              <Trash size={13} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </li>
+                  )
+                })}
               </ul>
+
+              {/* Add checklist item form */}
               <form
-                className="mt-1 flex min-h-11 items-center gap-3"
+                className="mt-2 flex items-center gap-2 rounded-xl border border-[var(--hairline)] bg-[var(--surface)] p-1.5 pl-2.5 transition-colors focus-within:border-[var(--accent)] focus-within:ring-1 focus-within:ring-[var(--accent)]/20"
                 onSubmit={(e) => {
                   e.preventDefault()
                   addSubtask()
                 }}
               >
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center text-[var(--accent)]">
-                  <Plus size={16} />
-                </span>
-                <input
-                  ref={subInputRef}
-                  value={subDraft}
-                  onChange={(e) => setSubDraft(e.target.value)}
-                  placeholder="Add checklist item"
-                  data-gramm="false"
-                  className="min-w-0 flex-1 border-0 bg-transparent py-2 text-[15px] text-[var(--ink)] outline-none placeholder:text-[var(--muted)]"
-                />
+                <Plus size={16} className="text-[var(--muted)] shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <SmartTaskTitleInput
+                    inputRef={subEditorRef}
+                    value={subDraft}
+                    onChange={setSubDraft}
+                    onSubmit={addSubtask}
+                    highlights={subDraftNlp.highlights}
+                    placeholder="Add checklist item..."
+                    autoFocus={false}
+                    className="box-border w-full border-0 bg-transparent py-1 text-sm text-[var(--ink)] outline-none min-h-[1.5rem] whitespace-pre-wrap break-words empty:before:content-[attr(data-placeholder)] empty:before:text-[var(--muted)] empty:before:font-normal empty:before:pointer-events-none"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSubDatePickerTarget('draft')}
+                  className={`flex items-center gap-1 rounded-md px-2 py-1 font-mono-meta text-xs shrink-0 transition ${
+                    effectiveSubDraftDue
+                      ? 'bg-[var(--accent-wash)] text-[var(--accent)] font-medium ring-1 ring-[var(--accent)]/30'
+                      : 'text-[var(--muted)] hover:bg-[var(--quiet)]'
+                  }`}
+                  title={
+                    subDraftNlp.dueAt && !subDraftDue
+                      ? `Auto-detected from text: "${subDraftNlp.dueText}"`
+                      : 'Assign due date to this checklist item'
+                  }
+                >
+                  <CalendarIcon size={13} />
+                  {effectiveSubDraftDue
+                    ? format(parseISO(effectiveSubDraftDue), 'MMM d')
+                    : 'Date'}
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={!subDraft.trim()}
+                  className="focus-ring flex items-center gap-1 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[var(--accent-pressed)] disabled:opacity-40 disabled:pointer-events-none shrink-0"
+                >
+                  Add
+                </button>
               </form>
             </div>
 
@@ -1140,6 +1359,39 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
           }}
         />
       )}
+
+      {subDatePickerTarget && (
+        <DueDatePicker
+          value={
+            subDatePickerTarget === 'draft'
+              ? subDraftDue
+                ? parseISO(subDraftDue)
+                : (dueAt || new Date())
+              : (() => {
+                  const s = subtasks.find((x) => x.id === subDatePickerTarget)
+                  return s?.dueAt ? parseISO(s.dueAt) : null
+                })()
+          }
+          onClose={() => setSubDatePickerTarget(null)}
+          onApply={(date) => {
+            if (subDatePickerTarget === 'draft') {
+              setSubDraftDue(date ? date.toISOString() : null)
+            } else {
+              setSubtasks((prev) =>
+                prev.map((x) =>
+                  x.id === subDatePickerTarget
+                    ? { ...x, dueAt: date ? date.toISOString() : null }
+                    : x,
+                ),
+              )
+              if (editingSubtaskId === subDatePickerTarget) {
+                setEditingSubtaskDue(date ? date.toISOString() : null)
+              }
+            }
+            setSubDatePickerTarget(null)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -1170,19 +1422,34 @@ function Pill({
   )
 }
 
-function Menu({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+function Menu({
+  children,
+  onClose,
+  align = 'left',
+}: {
+  children: ReactNode
+  onClose: () => void
+  align?: 'left' | 'right'
+}) {
   return (
     <>
       <button
         type="button"
-        className="fixed inset-0 z-10 cursor-default bg-transparent"
+        className="fixed inset-0 z-[60] cursor-default bg-black/25 backdrop-blur-[2px] sm:bg-transparent sm:backdrop-blur-none"
         onClick={(e) => {
           e.stopPropagation()
           onClose()
         }}
         aria-label="Close menu"
       />
-      <div className="absolute top-full left-0 z-20 mt-2 w-64 rounded-[10px] border border-[var(--hairline)] bg-[var(--surface)] p-1 shadow-sm">
+      <div
+        className={[
+          'fixed inset-x-0 bottom-0 z-[70] max-h-[75dvh] overflow-y-auto rounded-t-2xl border-t border-[var(--hairline)] bg-[var(--surface)] p-3 shadow-2xl pb-[calc(1.25rem+env(safe-area-inset-bottom))]',
+          'sm:absolute sm:inset-x-auto sm:bottom-auto sm:top-full sm:z-30 sm:mt-2 sm:w-68 sm:max-h-72 sm:rounded-[12px] sm:border sm:border-[var(--hairline)] sm:p-1.5 sm:shadow-[var(--shadow-card)]',
+          align === 'right' ? 'sm:right-0 sm:left-auto' : 'sm:left-0 sm:right-auto',
+        ].join(' ')}
+      >
+        <div className="mx-auto mb-2.5 h-1 w-10 rounded-full bg-[var(--hairline)] sm:hidden" />
         {children}
       </div>
     </>

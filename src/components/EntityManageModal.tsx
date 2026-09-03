@@ -65,10 +65,10 @@ export function EntityManageModal({
       }}
     >
       <div
-        className="w-full sm:max-w-sm sm:rounded-[var(--radius-modal)] rounded-t-[1.25rem] bg-[var(--surface)] shadow-2xl modal-panel overflow-hidden"
+        className="w-full sm:max-w-sm sm:rounded-[var(--radius-modal)] rounded-t-[1.25rem] bg-[var(--surface)] shadow-2xl modal-panel overflow-hidden max-h-[90dvh] flex flex-col"
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[var(--hairline)] px-5 py-4">
+        <div className="flex items-center justify-between border-b border-[var(--hairline)] px-5 py-4 shrink-0">
           <h2 className="text-lg font-semibold text-[var(--ink)] tracking-tight">
             Edit {type === 'project' ? 'Project' : 'Label'}
           </h2>
@@ -82,7 +82,7 @@ export function EntityManageModal({
         </div>
 
         {/* Body */}
-        <form onSubmit={handleSave} className="p-5">
+        <form onSubmit={handleSave} className="p-5 overflow-y-auto flex-1 pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:pb-5">
           <div className="space-y-4">
             {/* Name Input */}
             <div>

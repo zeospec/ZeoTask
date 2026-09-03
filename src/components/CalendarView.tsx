@@ -29,6 +29,7 @@ import {
   parseISO
 } from 'date-fns'
 import type { Chore, Label } from '../types/models'
+import { useProjects } from '../hooks/useProjects'
 import { ChoreRow } from './ChoreRow'
 import { ChevronLeft, ChevronRight, Plus } from './icons'
 
@@ -125,6 +126,7 @@ export function CalendarView({
   completing,
   labelsById
 }: Props) {
+  const { projects } = useProjects()
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(new Date()))
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [activeTab, setActiveTab] = useState<'scheduled' | 'unscheduled'>('scheduled')
@@ -342,6 +344,7 @@ export function CalendarView({
                       <ChoreRow
                         chore={chore}
                         labels={chore.labelIds.map(id => labelsById.get(id)).filter(Boolean) as Label[]}
+                        project={chore.projectId ? projects.find(p => p.id === chore.projectId) || null : null}
                         pending={pendingIds.has(chore.id)}
                         exiting={exiting.has(chore.id)}
                         completing={completing.has(chore.id)}
@@ -376,6 +379,7 @@ export function CalendarView({
                       <ChoreRow
                         chore={chore}
                         labels={chore.labelIds.map(id => labelsById.get(id)).filter(Boolean) as Label[]}
+                        project={chore.projectId ? projects.find(p => p.id === chore.projectId) || null : null}
                         pending={pendingIds.has(chore.id)}
                         exiting={exiting.has(chore.id)}
                         completing={completing.has(chore.id)}
@@ -397,6 +401,7 @@ export function CalendarView({
             <ChoreRow
               chore={activeDragChore}
               labels={activeDragChore.labelIds.map(id => labelsById.get(id)).filter(Boolean) as Label[]}
+              project={activeDragChore.projectId ? projects.find(p => p.id === activeDragChore.projectId) || null : null}
               pending={false}
               exiting={false}
               completing={false}

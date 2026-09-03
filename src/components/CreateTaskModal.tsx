@@ -28,6 +28,7 @@ type Props = {
   initialTitle?: string
   initialOverrides?: { projectId: string | null; manualLabels: string[]; ignoredTokens: { text: string; kind: string }[] }
   activeProjectId?: string | null
+  activeLabelId?: string | null
   onClose: () => void
   onSaved: () => void
   onDeleted?: () => void
@@ -59,7 +60,7 @@ const WEEKDAYS = [
   { d: 6, label: 'S' },
 ]
 
-export function CreateTaskModal({ open, editing, initialDue, initialTitle, initialOverrides, activeProjectId, onClose, onSaved, onDeleted }: Props) {
+export function CreateTaskModal({ open, editing, initialDue, initialTitle, initialOverrides, activeProjectId, activeLabelId, onClose, onSaved, onDeleted }: Props) {
   const { user } = useAuth()
   const { createTask, updateTask, deleteTask } = useChores()
   const { labels, create: createLabel } = useLabels()
@@ -113,10 +114,17 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
     setDueOverride(undefined)
     setFreqOverride(undefined)
     setPrioOverride(undefined)
-    setProjectOverride(initialOverrides?.projectId || undefined)
+    const initialLabels = [...(initialOverrides?.manualLabels || [])]
+    if (activeLabelId) {
+      const activeLbl = labels.find((l) => l.id === activeLabelId)
+      if (activeLbl && !initialLabels.includes(activeLbl.name)) {
+        initialLabels.push(activeLbl.name)
+      }
+    }
+    setProjectOverride(initialOverrides?.projectId || (activeProjectId ?? undefined))
     setRepeatEvery(1)
     setRepeatWeekdays([])
-    setManualLabelNames(initialOverrides?.manualLabels || [])
+    setManualLabelNames(initialLabels)
     setExcludedLabelNames([])
     setDescription('')
     setSubtasks([])
@@ -135,7 +143,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
     setError(null)
     setFocusNotes(false)
     setConfirmDelete(false)
-  }, [initialTitle, initialOverrides])
+  }, [initialTitle, initialOverrides, activeProjectId, activeLabelId, labels])
 
   useEffect(() => {
     if (!open) return
@@ -390,7 +398,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
       title,
       description,
       frequency: freq,
-      isRolling: true as const,
+      isRolling: editing ? editing.isRolling : true,
       priority,
       dueAt: dueAt?.toISOString() ?? null,
       labelIds,

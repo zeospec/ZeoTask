@@ -146,7 +146,7 @@ export function completeChore(
   const nextDue = nextDueAfterComplete(chore, completedAt)
   const stamp = completedAt.toISOString()
   const resetSubtasks = chore.subtasks.map((s) =>
-    nextDue ? { ...s, completed: false } : s,
+    nextDue ? { ...s, completed: false, dueAt: null } : s,
   )
   const snapshot: ChoreCompleteSnapshot = {
     dueAt: chore.dueAt,

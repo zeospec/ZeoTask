@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { format } from 'date-fns'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { CreateTaskModal } from './CreateTaskModal'
 import { Search, ZeoMark, CalendarIcon, ListIcon, X } from './icons'
 import { LiveAnnouncer, ToastStack } from './ToastStack'
@@ -10,6 +10,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useChores } from '../hooks/useChores'
 import { usePwa } from '../hooks/usePwa'
 import { useProjects } from '../hooks/useProjects'
+import { useLabels } from '../hooks/useLabels'
 import { notificationPermission, enablePushNotifications } from '../lib/push'
 import { Sidebar } from './Sidebar'
 import { InlineQuickAdd } from './InlineQuickAdd'
@@ -62,6 +63,10 @@ export function AppShell() {
   const { user, logout } = useAuth()
   const { syncing } = useChores()
   const { projects } = useProjects()
+  const { labels } = useLabels()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeProjectId = searchParams.get('project')
+  const activeLabelId = searchParams.get('label')
   const [createOpen, setCreateOpen] = useState(false)
   const [createInitialDue, setCreateInitialDue] = useState<Date | undefined>()
   const [createInitialTitle, setCreateInitialTitle] = useState('')
@@ -71,7 +76,6 @@ export function AppShell() {
   const [viewMenuOpen, setViewMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [activeFilter, setActiveFilter] = useState<FilterState | null>(null)
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activeDate, setActiveDate] = useState<Date | null>(null)
 
@@ -130,8 +134,41 @@ export function AppShell() {
 
   const displayName =
     user?.displayName?.trim() || user?.email?.split('@')[0] || 'Account'
-  
-  const activeProject = activeProjectId ? projects.find(p => p.id === activeProjectId) : null
+
+  const activeProject = activeProjectId ? projects.find((p) => p.id === activeProjectId) : null
+  const activeLabel = activeLabelId ? labels.find((l) => l.id === activeLabelId) : null
+
+  const handleSelectProject = useCallback(
+    (id: string | null) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          if (id) next.set('project', id)
+          else next.delete('project')
+          return next
+        },
+        { replace: true },
+      )
+      if (!onHome) navigate(id ? `/?project=${encodeURIComponent(id)}` : '/')
+    },
+    [navigate, onHome, setSearchParams],
+  )
+
+  const handleSelectLabel = useCallback(
+    (id: string | null) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          if (id) next.set('label', id)
+          else next.delete('label')
+          return next
+        },
+        { replace: true },
+      )
+      if (!onHome) navigate(id ? `/?label=${encodeURIComponent(id)}` : '/')
+    },
+    [navigate, onHome, setSearchParams],
+  )
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -165,7 +202,8 @@ export function AppShell() {
 
       if (!typing && e.key.toLowerCase() === 'h') {
         e.preventDefault()
-        setActiveProjectId(null)
+        handleSelectProject(null)
+        handleSelectLabel(null)
         setActiveFilter(null)
         setViewMode('agenda')
         return
@@ -193,7 +231,7 @@ export function AppShell() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [handleSelectLabel, handleSelectProject])
 
   useEffect(() => {
     if (location.pathname === '/new') {
@@ -205,6 +243,36 @@ export function AppShell() {
   useEffect(() => {
     setMenuOpen(false)
   }, [location.pathname])
+
+  const effectiveFilter: FilterState | null = useMemo(() => {
+    if (activeFilter) {
+      if (activeLabelId && !activeFilter.labelIds.includes(activeLabelId)) {
+        return {
+          ...activeFilter,
+          labelIds: [...activeFilter.labelIds, activeLabelId],
+        }
+      }
+      return activeFilter
+    }
+    if (activeLabelId) {
+      return {
+        priorities: [],
+        labelIds: [activeLabelId],
+      }
+    }
+    return null
+  }, [activeFilter, activeLabelId])
+
+  function handleFilterChange(nextFilter: FilterState | null) {
+    setActiveFilter(nextFilter)
+    if (!nextFilter || (activeLabelId && !nextFilter.labelIds.includes(activeLabelId))) {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete('label')
+        return next
+      }, { replace: true })
+    }
+  }
 
   function openCreate(initialDue?: Date, initialTitle: string = '', overrides?: CreateOverrides) {
     setEditing(null)
@@ -236,16 +304,48 @@ export function AppShell() {
           <div className="flex items-center gap-2">
             <ZeoMark size={32} />
             <div>
-              <p className="flex items-center gap-2 text-lg font-semibold tracking-tight text-[var(--ink)]">
-                {activeProject ? (
-                  <>
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: activeProject.color }} />
-                    {activeProject.name}
-                  </>
+              <div className="flex items-center gap-2 text-lg font-semibold tracking-tight text-[var(--ink)]">
+                {activeProject || activeLabel ? (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {activeProject && (
+                      <span className="flex items-center gap-1.5 rounded-md bg-[var(--quiet)] px-2 py-0.5 text-sm font-medium">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: activeProject.color }} />
+                        <span className="truncate max-w-[120px] sm:max-w-xs">{activeProject.name}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleSelectProject(null)
+                          }}
+                          className="ml-0.5 rounded p-0.5 text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)]"
+                          title="Clear project filter"
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    )}
+                    {activeLabel && (
+                      <span className="flex items-center gap-1 rounded-md bg-[var(--quiet)] px-2 py-0.5 text-sm font-medium">
+                        <span className="text-[var(--muted)] font-normal">#</span>
+                        <span className="truncate max-w-[120px] sm:max-w-xs">{activeLabel.name}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleSelectLabel(null)
+                          }}
+                          className="ml-0.5 rounded p-0.5 text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)]"
+                          title="Clear label filter"
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    )}
+                  </div>
                 ) : (
-                  'ZeoTask'
+                  <span>ZeoTask</span>
                 )}
-              </p>
+              </div>
             {syncing ? (
               <p className="font-mono-meta text-[11px] text-[var(--muted)]">
                 Syncing…
@@ -260,7 +360,7 @@ export function AppShell() {
         </div>
 
         <div className="relative flex items-center gap-1">
-          <FilterMenu activeFilter={activeFilter} onChange={setActiveFilter} />
+          <FilterMenu activeFilter={effectiveFilter} onChange={handleFilterChange} />
           
           <div className="relative">
             <button
@@ -472,13 +572,14 @@ export function AppShell() {
       )}
 
       <main className="flex-1">
-        <Outlet context={{ openEdit, openCreate, activeFilter, activeProjectId, viewMode, setActiveDate }} />
+        <Outlet context={{ openEdit, openCreate, activeFilter: effectiveFilter, activeProjectId, viewMode, setActiveDate }} />
       </main>
 
       {onHome && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--hairline)] bg-[var(--canvas)]/95 px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur">
           <InlineQuickAdd 
             activeProjectId={activeProjectId} 
+            activeLabelId={activeLabelId}
             onExpand={(title, overrides) => openCreate(viewMode !== 'agenda' && activeDate ? activeDate : undefined, title, overrides)} 
           />
         </div>
@@ -491,6 +592,7 @@ export function AppShell() {
         initialTitle={createInitialTitle}
         initialOverrides={createOverrides}
         activeProjectId={activeProjectId}
+        activeLabelId={activeLabelId}
         onClose={() => {
           setCreateOpen(false)
           setEditing(null)
@@ -510,9 +612,13 @@ export function AppShell() {
         onClose={() => setSidebarOpen(false)}
         activeProjectId={activeProjectId}
         onSelectProject={(id) => {
-          setActiveProjectId(id)
-          // Also navigate home if they were in /completed
-          if (!onHome) navigate('/')
+          handleSelectProject(id)
+          handleSelectLabel(null)
+        }}
+        activeLabelId={activeLabelId}
+        onSelectLabel={(id) => {
+          handleSelectLabel(id)
+          handleSelectProject(null)
         }}
       />
 

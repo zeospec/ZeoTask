@@ -173,6 +173,19 @@ export function ChoresPage() {
 
   const empty = bucketOrder.every((bucket) => groups[bucket].length === 0)
   const hadAny = chores.length > 0
+  const currentProject = activeProjectId
+    ? projects.find((p) => p.id === activeProjectId)
+    : null
+  const currentLabel =
+    activeFilter && activeFilter.labelIds.length === 1
+      ? byId.get(activeFilter.labelIds[0])
+      : null
+  const isFiltered = Boolean(activeFilter || activeProjectId)
+
+  const pageTitle =
+    activeFilter?.name ||
+    currentProject?.name ||
+    (currentLabel ? `#${currentLabel.name}` : 'Tasks')
 
   return (
     <div className="space-y-8">
@@ -196,13 +209,23 @@ export function ChoresPage() {
             <span className="rounded-md bg-[var(--surface)]" />
           </div>
           <p className="font-mono-meta text-xs uppercase tracking-widest text-[var(--accent)]">
-            {activeFilter ? 'No matches' : hadAny ? 'Today is clear' : 'Ready when you are'}
+            {isFiltered ? 'No matches' : hadAny ? 'Today is clear' : 'Ready when you are'}
           </p>
           <h2 className="mt-3 text-2xl font-bold tracking-tight text-[var(--ink)]">
-            {activeFilter ? 'No tasks match this filter.' : hadAny ? 'Everything has its moment.' : 'Capture the next thing.'}
+            {currentProject
+              ? `No tasks in ${currentProject.name}`
+              : currentLabel
+              ? `No tasks with #${currentLabel.name}`
+              : activeFilter
+              ? 'No tasks match this filter.'
+              : hadAny
+              ? 'Everything has its moment.'
+              : 'Capture the next thing.'}
           </h2>
           <p className="mt-4 max-w-md text-[15px] leading-7 text-[var(--muted)]">
-            {activeFilter
+            {currentProject
+              ? 'Type naturally below or click Add a task to create a task in this project.'
+              : isFiltered
               ? 'Try adjusting your filter priorities or labels.'
               : hadAny
               ? 'You finished what was open. Let the rest of the day stay open.'
@@ -221,10 +244,16 @@ export function ChoresPage() {
         <>
           <div className="mb-2">
             <p className="font-mono-meta text-xs uppercase tracking-widest text-[var(--muted)]">
-              {activeFilter ? 'Filtered' : 'Today'}
+              {isFiltered ? 'Filtered' : 'Today'}
             </p>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight text-[var(--ink)]">
-              {activeFilter?.name || 'Tasks'}
+            <h1 className="mt-1 flex items-center gap-2 text-2xl font-bold tracking-tight text-[var(--ink)]">
+              {currentProject && (
+                <span
+                  className="h-3.5 w-3.5 rounded-full shrink-0"
+                  style={{ backgroundColor: currentProject.color }}
+                />
+              )}
+              <span>{pageTitle}</span>
             </h1>
           </div>
           {bucketOrder.map((bucket: ChoreBucket) => {

@@ -38,11 +38,25 @@ export function nextDueAfterComplete(
       ? parseISO(chore.dueAt)
       : completedAt
 
-  if (chore.frequency === 'weekly' && chore.repeatWeekdays.length > 0) {
-    return nextWeeklyOccurrence(base, chore.repeatWeekdays, every).toISOString()
+  let next =
+    chore.frequency === 'weekly' && chore.repeatWeekdays.length > 0
+      ? nextWeeklyOccurrence(base, chore.repeatWeekdays, every)
+      : advance(base, chore.frequency, every)
+
+  // Catch-up protection: if non-rolling and next is still in the past,
+  // advance until it reaches today or a future date to prevent backlog loops.
+  if (!chore.isRolling && isBefore(next, startOfDay(completedAt))) {
+    let safety = 0
+    while (isBefore(next, startOfDay(completedAt)) && safety < 100) {
+      next =
+        chore.frequency === 'weekly' && chore.repeatWeekdays.length > 0
+          ? nextWeeklyOccurrence(next, chore.repeatWeekdays, every)
+          : advance(next, chore.frequency, every)
+      safety++
+    }
   }
 
-  return advance(base, chore.frequency, every).toISOString()
+  return next.toISOString()
 }
 
 /** Preview next due from a given anchor (for create/edit UI). */

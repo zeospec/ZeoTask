@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from './icons'
 import {
   addDays,
@@ -78,7 +79,13 @@ export function DueDatePicker({ value, onApply, onClose }: Props) {
 
   const today = startOfDay(new Date())
   const tomorrow = addDays(today, 1)
-  const weekend = nextSaturday(today)
+  const dayOfWeek = today.getDay() // 0 = Sun, 6 = Sat
+  const weekend =
+    dayOfWeek === 6
+      ? addDays(today, 1) // Sunday
+      : dayOfWeek === 0
+      ? today // Today (Sunday)
+      : nextSaturday(today)
   const nextWeek = addWeeks(today, 1)
   const nextMonth = addMonths(today, 1)
 
@@ -92,8 +99,8 @@ export function DueDatePicker({ value, onApply, onClose }: Props) {
       }`
     : 'No date selected'
 
-  return (
-    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-[var(--ink)]/35 p-3 sm:items-center">
+  const modalContent = (
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 backdrop-blur-sm p-3 sm:items-center">
       <button
         type="button"
         className="absolute inset-0 cursor-default"
@@ -252,6 +259,8 @@ export function DueDatePicker({ value, onApply, onClose }: Props) {
       </div>
     </div>
   )
+
+  return createPortal(modalContent, document.body)
 }
 
 function buildCalendar(month: Date) {

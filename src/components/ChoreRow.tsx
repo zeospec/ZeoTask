@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { format, parseISO } from 'date-fns'
 import type { Chore, Label } from '../types/models'
 import { priorityLabel, recurrenceSummary } from '../lib/scheduler'
@@ -15,7 +16,7 @@ type Props = {
 }
 
 /** Complete control + tap body to edit. No ⋯ / chevron clutter. */
-export function ChoreRow({
+export const ChoreRow = memo(function ChoreRow({
   chore,
   labels,
   project,
@@ -54,7 +55,7 @@ export function ChoreRow({
               <polyline points="9 18 15 12 9 6" />
             </svg>
             <span className="truncate max-w-[240px] font-medium text-[var(--ink)]/80">{chore.parentChoreTitle}</span>
-            <span className="rounded bg-[var(--quiet)] px-1 py-0.2 text-[9.5px] uppercase tracking-wider text-[var(--muted)]">Checklist</span>
+            <span className="rounded bg-[var(--quiet)] px-1 py-0.5 text-[9.5px] uppercase tracking-wider text-[var(--muted)]">Checklist</span>
           </div>
         )}
         <h3 className="text-[15.5px] font-medium leading-[22px] text-[var(--ink)]">
@@ -142,4 +143,4 @@ export function ChoreRow({
       </button>
     </article>
   )
-}
+})

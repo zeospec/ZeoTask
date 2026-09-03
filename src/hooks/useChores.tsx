@@ -197,20 +197,63 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
     (overdue: Chore[]) => {
       if (!user || overdue.length === 0) return
       const now = new Date()
-      for (const chore of overdue) {
-        if (!chore.dueAt) continue
-        const nextDue = moveDueToToday(chore.dueAt, now)
-        runWrite(
-          chore.id,
-          updateChoreWrite(user.uid, chore.id, {
+
+      // Track updates per chore ID to avoid conflicting writes
+      const chorePatches = new Map<string, Parameters<typeof updateChoreWrite>[2]>()
+      // Track updated subtasks per parent chore ID: parentId -> (subtaskId -> nextDue)
+      const parentSubtaskUpdates = new Map<string, Map<string, string>>()
+
+      for (const item of overdue) {
+        if (!item.dueAt) continue
+        const nextDue = moveDueToToday(item.dueAt, now)
+
+        if (item.isSubtask && item.parentChoreId && item.subtaskId) {
+          let subMap = parentSubtaskUpdates.get(item.parentChoreId)
+          if (!subMap) {
+            subMap = new Map()
+            parentSubtaskUpdates.set(item.parentChoreId, subMap)
+          }
+          subMap.set(item.subtaskId, nextDue)
+        } else {
+          chorePatches.set(item.id, {
             dueAt: nextDue,
             lastDuePushAt: null,
             lastPreduePushAt: null,
             lastOverduePushAt: null,
-          }),
-          'Could not move task',
-        )
+          })
+        }
       }
+
+      // Apply parent chore updates
+      for (const [choreId, patch] of chorePatches.entries()) {
+        const subUpdates = parentSubtaskUpdates.get(choreId)
+        if (subUpdates) {
+          const parent = chores.find((c) => c.id === choreId)
+          if (parent) {
+            patch.subtasks = parent.subtasks.map((s) =>
+              subUpdates.has(s.id) ? { ...s, dueAt: subUpdates.get(s.id)! } : s,
+            )
+          }
+          parentSubtaskUpdates.delete(choreId)
+        }
+        runWrite(choreId, updateChoreWrite(user.uid, choreId, patch), 'Could not move task')
+      }
+
+      // Apply remaining subtask-only updates to parent chores
+      for (const [parentChoreId, subUpdates] of parentSubtaskUpdates.entries()) {
+        const parent = chores.find((c) => c.id === parentChoreId)
+        if (parent) {
+          const nextSubtasks = parent.subtasks.map((s) =>
+            subUpdates.has(s.id) ? { ...s, dueAt: subUpdates.get(s.id)! } : s,
+          )
+          runWrite(
+            parentChoreId,
+            updateChoreWrite(user.uid, parentChoreId, { subtasks: nextSubtasks }),
+            'Could not move checklist items',
+          )
+        }
+      }
+
       const n = overdue.length
       pushToast(
         n === 1 ? '1 task moved to today' : `${n} tasks moved to today`,
@@ -219,7 +262,7 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
         n === 1 ? 'Moved 1 overdue task to today' : `Moved ${n} overdue tasks to today`,
       )
     },
-    [announceLive, pushToast, runWrite, user],
+    [announceLive, chores, pushToast, runWrite, user],
   )
 
   const completeSubtask = useCallback(

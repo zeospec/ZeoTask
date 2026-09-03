@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import {
   DndContext,
   pointerWithin,
@@ -136,11 +136,11 @@ export function CalendarView({
     onActiveDateChange(activeTab === 'scheduled' ? selectedDate : null)
   }, [selectedDate, activeTab, onActiveDateChange])
 
-  const prevMonth = () => setCurrentMonth(subMonths(currentMonth, 1))
-  const nextMonth = () => setCurrentMonth(addMonths(currentMonth, 1))
+  const prevMonth = useCallback(() => setCurrentMonth((m) => subMonths(m, 1)), [])
+  const nextMonth = useCallback(() => setCurrentMonth((m) => addMonths(m, 1)), [])
   
-  const prevWeek = () => setSelectedDate(subDays(selectedDate, 7))
-  const nextWeek = () => setSelectedDate(addDays(selectedDate, 7))
+  const prevWeek = useCallback(() => setSelectedDate((d) => subDays(d, 7)), [])
+  const nextWeek = useCallback(() => setSelectedDate((d) => addDays(d, 7)), [])
 
   // Keyboard shortcuts (T = Today, J = Next, K = Prev)
   useEffect(() => {
@@ -171,7 +171,7 @@ export function CalendarView({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [mode, selectedDate, currentMonth])
+  }, [mode, nextMonth, nextWeek, prevMonth, prevWeek])
 
   const days = useMemo(() => {
     if (mode === 'week') {

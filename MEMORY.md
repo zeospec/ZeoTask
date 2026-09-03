@@ -137,4 +137,9 @@ npm run build
   - Added NLP natural language due date parsing (`parseSubtaskTitle`) for checklists with live detected date indicators in `CreateTaskModal`, `ChoreDetailPage`, and `EditSubtaskModal`.
   - Extended live NLP syntax highlighting to checklist items: upgraded `SmartTaskTitleInput` to support customizable typography, ref forwarding, escape handling, and rendered it across checklist draft inputs, inline edits, and edit modal.
   - Implemented inline double confirmation when deleting checklist items across all surfaces (`CreateTaskModal`, `ChoreDetailPage`, `EditSubtaskModal`) to prevent accidental deletion.
+  - Performance & bundle optimization: route code-splitting with `React.lazy` (`ChoreDetailPage`, `CompletedPage`, `ProfilePage`), Rollup manual vendor chunking (`firebase`, `nlp-date`, `dnd`, `vendor`), and `React.memo` for `ChoreRow`. Initial bundle dropped from 1,153 kB to 142 kB.
+  - Subtask recurrence hygiene: in `completeChore`, subtasks reset `dueAt: null` alongside `completed: false` when parent recurs, preventing historical date traps.
+  - Non-rolling recurrence catch-up: `nextDueAfterComplete` safely loops overdue non-rolling tasks up to the current date to eliminate repetitive completion backlog cycles.
+  - Navigation & Deep Linking: Active projects and labels synchronize with URL search params (`?project=...&label=...`), enabling back/forward history and reload persistence. Added clickable label filtering in `Sidebar` and clearable badges in the `AppShell` header.
+  - Contextual Views: `ChoresPage` reflects active project/label in its main heading (with color dot) and contextual empty states. `SearchOverlay` searches across all checklist items with direct breadcrumb highlighting.
 

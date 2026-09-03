@@ -47,10 +47,14 @@ export function SearchOverlay({ open, onClose, onSelect }: Props) {
         .map((id) => byId.get(id)?.name ?? '')
         .join(' ')
         .toLowerCase()
+      const subtaskMatch = c.subtasks?.some((s) =>
+        s.title.toLowerCase().includes(query),
+      )
       return (
         c.title.toLowerCase().includes(query) ||
         c.description.toLowerCase().includes(query) ||
-        labelText.includes(query)
+        labelText.includes(query) ||
+        subtaskMatch
       )
     })
   }, [byId, chores, q])
@@ -98,6 +102,19 @@ export function SearchOverlay({ open, onClose, onSelect }: Props) {
                   <span className="text-[15px] font-medium text-[var(--ink)]">
                     {chore.title}
                   </span>
+                  {q.trim() &&
+                    chore.subtasks?.some((s) =>
+                      s.title.toLowerCase().includes(q.trim().toLowerCase()),
+                    ) &&
+                    !chore.title.toLowerCase().includes(q.trim().toLowerCase()) && (
+                      <span className="truncate text-xs text-[var(--accent)] font-medium">
+                        ↳ Checklist: {
+                          chore.subtasks.find((s) =>
+                            s.title.toLowerCase().includes(q.trim().toLowerCase()),
+                          )?.title
+                        }
+                      </span>
+                    )}
                   <span className="font-mono-meta text-[11px] text-[var(--muted)]">
                     {chore.dueAt
                       ? format(parseISO(chore.dueAt), 'MMM d · h:mm a')

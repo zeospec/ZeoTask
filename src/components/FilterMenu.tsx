@@ -234,11 +234,15 @@ export function FilterMenu({ activeFilter, onChange }: Props) {
               </form>
             )}
             
-            {activeFilter && !hasAdhocChanges && !activeFilter.viewId && (
+            {((activeFilter && !activeFilter.viewId) || localPriorities.length > 0 || localLabels.length > 0) && (
               <div className="border-t border-[var(--hairline)] p-2">
                 <button
                   type="button"
-                  onClick={() => onChange(null)}
+                  onClick={() => {
+                    setLocalPriorities([])
+                    setLocalLabels([])
+                    onChange(null)
+                  }}
                   className="w-full rounded-lg px-2 py-1.5 text-sm font-medium text-[var(--danger)] hover:bg-[var(--quiet)]"
                 >
                   Clear filter

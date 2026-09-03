@@ -61,4 +61,28 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/firebase')) {
+            return 'firebase'
+          }
+          if (id.includes('node_modules/chrono-node') || id.includes('node_modules/date-fns')) {
+            return 'nlp-date'
+          }
+          if (id.includes('node_modules/@dnd-kit')) {
+            return 'dnd'
+          }
+          if (
+            id.includes('node_modules/react') ||
+            id.includes('node_modules/react-dom') ||
+            id.includes('node_modules/react-router')
+          ) {
+            return 'vendor'
+          }
+        },
+      },
+    },
+  },
 })

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import { useChores } from '../hooks/useChores'
@@ -10,8 +10,9 @@ type ShellContext = {
 
 /** Gone list only - completed / archived one-shots. */
 export function CompletedPage() {
-  const { chores, deleteTask } = useChores()
+  const { chores, updateTask, deleteTask } = useChores()
   const { openEdit } = useOutletContext<ShellContext>()
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const archived = useMemo(
     () =>
@@ -58,30 +59,60 @@ export function CompletedPage() {
                 <p className="truncate text-[15px] font-medium text-[var(--ink)]">
                   {chore.title}
                 </p>
-                <p className="font-mono-meta text-[11px] text-[var(--muted)]">
-                  {chore.archivedAt
-                    ? format(parseISO(chore.archivedAt), 'MMM d, yyyy · h:mm a')
-                    : ''}
-                </p>
+                <div className="flex items-center gap-2 font-mono-meta text-[11px] text-[var(--muted)]">
+                  {chore.archivedAt && (
+                    <span>{format(parseISO(chore.archivedAt), 'MMM d, yyyy · h:mm a')}</span>
+                  )}
+                  {chore.subtasks && chore.subtasks.length > 0 && (
+                    <span>
+                      · {chore.subtasks.filter((s) => s.completed).length}/{chore.subtasks.length} checklist
+                    </span>
+                  )}
+                </div>
               </div>
               <button
                 type="button"
-                className="focus-ring shrink-0 rounded-lg px-2 py-1.5 text-xs text-[var(--accent)] hover:bg-[var(--accent-wash)]"
+                className="focus-ring shrink-0 rounded-lg px-2 py-1.5 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)]"
+                onClick={() => updateTask(chore.id, { archivedAt: null })}
+              >
+                Restore
+              </button>
+              <button
+                type="button"
+                className="focus-ring shrink-0 rounded-lg px-2 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)]"
                 onClick={() => openEdit(chore)}
               >
                 Edit
               </button>
-              <button
-                type="button"
-                className="focus-ring shrink-0 rounded-lg px-2 py-1.5 text-xs text-[var(--danger)] hover:bg-red-50"
-                onClick={() => {
-                  if (window.confirm(`Delete “${chore.title}” permanently?`)) {
-                    deleteTask(chore.id, chore.title)
-                  }
-                }}
-              >
-                Delete
-              </button>
+              {confirmDeleteId === chore.id ? (
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    className="focus-ring rounded-lg bg-[var(--danger)] px-2 py-1 text-xs font-semibold text-white hover:bg-red-600 transition"
+                    onClick={() => {
+                      deleteTask(chore.id, chore.title)
+                      setConfirmDeleteId(null)
+                    }}
+                  >
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    className="focus-ring rounded-lg px-2 py-1 text-xs text-[var(--muted)] hover:bg-[var(--quiet)]"
+                    onClick={() => setConfirmDeleteId(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="focus-ring shrink-0 rounded-lg px-2 py-1.5 text-xs text-[var(--danger)] hover:bg-red-50 transition"
+                  onClick={() => setConfirmDeleteId(chore.id)}
+                >
+                  Delete
+                </button>
+              )}
             </li>
           ))}
         </ul>

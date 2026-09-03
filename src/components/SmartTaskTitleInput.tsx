@@ -224,9 +224,21 @@ export function SmartTaskTitleInput({
   // Prevents pasting rich HTML by forcing plaintext extraction
   const handlePaste = (e: React.ClipboardEvent) => {
     e.preventDefault()
-    const text = e.clipboardData.getData('text/plain').replace(/[\r\n]/g, ' ')
-    // insertText executes properly at the active caret on all modern browsers
-    document.execCommand('insertText', false, text)
+    const text = e.clipboardData.getData('text/plain').replace(/[\r\n]+/g, ' ')
+    if (!document.execCommand('insertText', false, text)) {
+      const sel = window.getSelection()
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0)
+        range.deleteContents()
+        const textNode = document.createTextNode(text)
+        range.insertNode(textNode)
+        range.setStartAfter(textNode)
+        range.collapse(true)
+        sel.removeAllRanges()
+        sel.addRange(range)
+        handleInput()
+      }
+    }
   }
 
   return (

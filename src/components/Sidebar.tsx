@@ -9,9 +9,18 @@ type SidebarProps = {
   onClose: () => void
   activeProjectId: string | null
   onSelectProject: (id: string | null) => void
+  activeLabelId?: string | null
+  onSelectLabel?: (id: string | null) => void
 }
 
-export function Sidebar({ open, onClose, activeProjectId, onSelectProject }: SidebarProps) {
+export function Sidebar({
+  open,
+  onClose,
+  activeProjectId,
+  onSelectProject,
+  activeLabelId,
+  onSelectLabel,
+}: SidebarProps) {
   const { projects, create: createProj, update: updateProj, remove: removeProj } = useProjects()
   const { labels, create: createLbl, update: updateLbl, remove: removeLbl } = useLabels()
   
@@ -212,9 +221,30 @@ export function Sidebar({ open, onClose, activeProjectId, onSelectProject }: Sid
                   <div key={label.id} className="group flex items-center w-full">
                     <button
                       type="button"
-                      className="flex-1 text-left flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius-control)] text-sm font-medium transition-colors text-[var(--ink)] hover:bg-[var(--quiet)]"
+                      onClick={() => {
+                        onSelectLabel?.(label.id)
+                        onClose()
+                      }}
+                      className={`flex-1 text-left flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius-control)] text-sm font-medium transition-colors ${
+                        activeLabelId === label.id
+                          ? 'bg-[var(--accent-wash)] text-[var(--accent)] font-semibold'
+                          : 'text-[var(--ink)] hover:bg-[var(--quiet)]'
+                      }`}
                     >
-                      <svg className="shrink-0 text-[var(--muted)]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>
+                      <svg
+                        className={`shrink-0 ${activeLabelId === label.id ? 'text-[var(--accent)]' : 'text-[var(--muted)]'}`}
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                        <line x1="7" y1="7" x2="7.01" y2="7" />
+                      </svg>
                       <span className="truncate">{label.name}</span>
                     </button>
                     <button
@@ -311,8 +341,14 @@ export function Sidebar({ open, onClose, activeProjectId, onSelectProject }: Sid
           }}
           onDelete={async () => {
             if (editingEntity.type === 'project') {
+              if (activeProjectId === editingEntity.id) {
+                onSelectProject(null)
+              }
               await removeProj(editingEntity.id)
             } else {
+              if (activeLabelId === editingEntity.id) {
+                onSelectLabel?.(null)
+              }
               await removeLbl(editingEntity.id)
             }
           }}

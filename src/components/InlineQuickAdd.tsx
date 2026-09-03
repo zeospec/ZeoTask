@@ -11,10 +11,11 @@ import { X, Plus, Tag } from './icons'
 
 type Props = {
   activeProjectId?: string | null
+  activeLabelId?: string | null
   onExpand: (initialTitle: string, overrides?: { projectId: string | null; manualLabels: string[]; ignoredTokens: { text: string; kind: string }[] }) => void
 }
 
-export function InlineQuickAdd({ activeProjectId, onExpand }: Props) {
+export function InlineQuickAdd({ activeProjectId, activeLabelId, onExpand }: Props) {
   const { user } = useAuth()
   const { createTask } = useChores()
   const { labels, create: createLabel } = useLabels()
@@ -45,6 +46,12 @@ export function InlineQuickAdd({ activeProjectId, onExpand }: Props) {
     setSubmitting(true)
 
     const combinedLabels = Array.from(new Set([...parsed.labelNames, ...manualLabelNames]))
+    if (activeLabelId) {
+      const activeLbl = labels.find((l) => l.id === activeLabelId)
+      if (activeLbl && !combinedLabels.includes(activeLbl.name)) {
+        combinedLabels.push(activeLbl.name)
+      }
+    }
     const labelIds = await ensureLabelIds(user.uid, combinedLabels, [...labels])
 
     createTask({
@@ -257,9 +264,16 @@ export function InlineQuickAdd({ activeProjectId, onExpand }: Props) {
         <button
           type="button"
           onClick={() => {
+            const labelsToSend = [...manualLabelNames]
+            if (activeLabelId) {
+              const activeLbl = labels.find((l) => l.id === activeLabelId)
+              if (activeLbl && !labelsToSend.includes(activeLbl.name)) {
+                labelsToSend.push(activeLbl.name)
+              }
+            }
             onExpand(rawTitle, {
-              projectId: projectOverride,
-              manualLabels: manualLabelNames,
+              projectId: projectOverride || activeProjectId || null,
+              manualLabels: labelsToSend,
               ignoredTokens,
             })
             setRawTitle('')

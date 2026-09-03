@@ -359,19 +359,39 @@ export type SubtaskParseResult = {
   highlights: TextHighlight[]
 }
 
-/** Parses natural language due dates for checklist items (e.g., "Buy milk tomorrow" -> { cleanedTitle: "Buy milk", dueAt: Date }) */
+/** Parses natural language due dates specifically for checklist items (avoids stripping # or @ from subtask text) */
 export function parseSubtaskTitle(input: string): SubtaskParseResult {
   const trimmed = input.trim()
   if (!trimmed) {
     return { cleanedTitle: '', dueAt: null, highlights: [] }
   }
-  const result = parseSmartTitle(trimmed)
-  const dueHighlight = result.highlights.find((h) => h.kind === 'due')
+  const dueMatches = collectDue(trimmed)
+  if (dueMatches.length === 0) {
+    return { cleanedTitle: trimmed, dueAt: null, highlights: [] }
+  }
+  const match = dueMatches[0]
+  const acc: MutableParse = {
+    dueAt: null,
+    frequency: 'once',
+    priority: 0,
+    labelNames: [],
+    projectName: null,
+    repeatLabel: null,
+  }
+  match.apply(acc)
+  const cleanedTitle = stripRanges(trimmed, [match])
   return {
-    cleanedTitle: result.cleanedTitle || trimmed,
-    dueAt: result.dueAt,
-    dueText: dueHighlight?.text,
-    highlights: result.highlights,
+    cleanedTitle: cleanedTitle || trimmed,
+    dueAt: acc.dueAt,
+    dueText: match.text,
+    highlights: [
+      {
+        text: match.text,
+        start: match.start,
+        end: match.end,
+        kind: 'due',
+      },
+    ],
   }
 }
 

@@ -107,6 +107,8 @@ npm run build
 - **Mobile viewport clipping:** On small screens (412px), `max-w-sm` (384px) + `px-4` (32px) = 416px which clips. Always pair `max-w-sm` with `w-full` so the smaller value wins.
 - **Hover-only interactions don't work on mobile.** Never use `opacity-0 group-hover:opacity-100` for critical actions. Always visible.
 - **`CreateTaskModal.reset()` must respect `initialOverrides`.** If `reset()` wipes project/label state unconditionally, overrides from InlineQuickAdd will be lost on modal open.
+- **Never put un-gated Firestore writes in client `useEffect` on `chores`:** Updating documents in a `useEffect([chores])` changes `updatedAt`, which re-triggers `subscribeChores`, creating an infinite write loop that flickers the task list and floods Firestore. All migrations should happen server-side in Cloud Functions.
+- **Deterministic Sort Tie-Breakers:** When sorting tasks by `dueAt`, tasks with identical due dates return `0` from `localeCompare`. Always provide deterministic tie-breakers (priority → title → id/createdAt) to prevent DOM flickering or list re-sorting when document timestamps update.
 - **Scheduled Cloud Function Firestore Reads:** Never perform full collection scans `where('archivedAt', '==', null)` in recurring cron functions. Always index with `nextReminderAt: string | null` and query `where('nextReminderAt', '<=', nowIso)` to avoid massive repeated reads (~4.8K reads/day for 19 tasks). Decouple daily digests so they only read active chores once a day.
 
 ## Session log

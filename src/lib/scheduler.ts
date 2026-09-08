@@ -208,13 +208,35 @@ export function groupChores(chores: Chore[]) {
     groups[bucketForChore(chore)].push(chore)
   }
   const byDue = (a: Chore, b: Chore) => {
+    if (!a.dueAt && !b.dueAt) {
+      const pDiff = (b.priority ?? 0) - (a.priority ?? 0)
+      if (pDiff !== 0) return pDiff
+      return String(a.createdAt || a.id).localeCompare(String(b.createdAt || b.id))
+    }
     if (!a.dueAt) return 1
     if (!b.dueAt) return -1
-    return String(a.dueAt || '').localeCompare(String(b.dueAt || ''))
+    const dueCmp = String(a.dueAt).localeCompare(String(b.dueAt))
+    if (dueCmp !== 0) return dueCmp
+
+    // Deterministic tie-breakers for tasks with identical due dates:
+    // 1. Higher priority first
+    const pDiff = (b.priority ?? 0) - (a.priority ?? 0)
+    if (pDiff !== 0) return pDiff
+    // 2. Title alphabetical
+    const tCmp = String(a.title || '').localeCompare(String(b.title || ''))
+    if (tCmp !== 0) return tCmp
+    // 3. Stable creation timestamp / ID
+    return String(a.createdAt || a.id).localeCompare(String(b.createdAt || b.id))
   }
   for (const key of bucketOrder) {
     if (key === 'anytime') {
-      groups[key].sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')))
+      groups[key].sort((a, b) => {
+        const pDiff = (b.priority ?? 0) - (a.priority ?? 0)
+        if (pDiff !== 0) return pDiff
+        const tCmp = String(a.title || '').localeCompare(String(b.title || ''))
+        if (tCmp !== 0) return tCmp
+        return String(a.createdAt || a.id).localeCompare(String(b.createdAt || b.id))
+      })
     } else {
       groups[key].sort(byDue)
     }

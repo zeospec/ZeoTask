@@ -90,17 +90,6 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
     )
   }, [user])
 
-  // One-time client-side backfill for active tasks missing nextReminderAt
-  useEffect(() => {
-    if (!user || !ready || chores.length === 0) return
-    const unmigrated = chores.filter(
-      (c) => c.archivedAt === null && c.dueAt && c.nextReminderAt === undefined,
-    )
-    if (unmigrated.length === 0) return
-    for (const c of unmigrated) {
-      void updateChoreWrite(user.uid, c.id, {}, c)
-    }
-  }, [user, ready, chores])
 
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))

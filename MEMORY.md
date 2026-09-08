@@ -100,13 +100,14 @@ npm run build
 - Every chore needs `updatedAt` (list `orderBy`).
 - Prefer **task** in UI; collection remains `chores`.
 - Create chrome: bottom **Type a task…** only — no top Add.
-- **PWA:** SW registers at app start (`PwaProvider`). Installed/standalone uses Google **redirect** auth (popup on desktop browser). Deploy on HTTPS (Firebase Hosting); add the production domain under Auth authorized domains.
-- **Push:** set `VITE_FIREBASE_VAPID_KEY`; deploy `functions` (`reminderTick` every 5 min). iOS needs Home Screen install. Brand in notifications: **ZeoTask**.
+- **PWA:** SW registers at app start (`PwaProvider`). Installed/standalone uses Google **redirect** auth (popup on desktop browser). Deploy on HTTPS (Netlify: `task.zeospec.com`); add the production domain under Firebase Auth authorized domains.
+- **Push & Scheduled Functions:** set `VITE_FIREBASE_VAPID_KEY`; deploy `functions` via `firebase deploy --only functions` (`reminderTick` runs every 10 min, indexed by `nextReminderAt`). Frontend is deployed to Netlify via Git push. iOS needs Home Screen install. Brand in notifications: **ZeoTask**.
 - **`ignoredTokens` type mismatch:** State stores `{text, kind}[]` for UI chips, but `parseSmartTitle()` expects `string[]`. Always `.map(t => t.text)` when calling the parser.
 - **Modals inside Sidebar:** CSS `transform` on the sidebar drawer breaks `position: fixed` for any child modal. Must use `createPortal(modal, document.body)`.
 - **Mobile viewport clipping:** On small screens (412px), `max-w-sm` (384px) + `px-4` (32px) = 416px which clips. Always pair `max-w-sm` with `w-full` so the smaller value wins.
 - **Hover-only interactions don't work on mobile.** Never use `opacity-0 group-hover:opacity-100` for critical actions. Always visible.
 - **`CreateTaskModal.reset()` must respect `initialOverrides`.** If `reset()` wipes project/label state unconditionally, overrides from InlineQuickAdd will be lost on modal open.
+- **Scheduled Cloud Function Firestore Reads:** Never perform full collection scans `where('archivedAt', '==', null)` in recurring cron functions. Always index with `nextReminderAt: string | null` and query `where('nextReminderAt', '<=', nowIso)` to avoid massive repeated reads (~4.8K reads/day for 19 tasks). Decouple daily digests so they only read active chores once a day.
 
 ## Session log
 
@@ -142,4 +143,10 @@ npm run build
   - Non-rolling recurrence catch-up: `nextDueAfterComplete` safely loops overdue non-rolling tasks up to the current date to eliminate repetitive completion backlog cycles.
   - Navigation & Deep Linking: Active projects and labels synchronize with URL search params (`?project=...&label=...`), enabling back/forward history and reload persistence. Added clickable label filtering in `Sidebar` and clearable badges in the `AppShell` header.
   - Contextual Views: `ChoresPage` reflects active project/label in its main heading (with color dot) and contextual empty states. `SearchOverlay` searches across all checklist items with direct breadcrumb highlighting.
+- **2026-09-08:** Excessive Firestore read usage resolution:
+  - Diagnosed 4.8K reads/day (~200 reads/hour) as coming from `reminderTick` Cloud Function performing full collection scans (`where('archivedAt', '==', null)`) on all active chores every 5 minutes (288 times/day).
+  - Introduced `nextReminderAt: string | null` indexed field on `Chore`. Created `computeNextReminderAt` helper and maintained it across `buildPayload`, `updateChore`, `completeChore`, and `undoCompleteChore`.
+  - Refactored `functions/src/index.ts`: switched schedule to `every 10 minutes` with a 30-minute grace window; replaced full scan with indexed query `where('nextReminderAt', '<=', nowIso).limit(50)`; decoupled morning digest so active chores are only read during the morning digest window once per day; prunes invalid FCM tokens automatically; includes one-time self-healing migration (`remindersMigratedV2`) for existing active chores.
+  - Added user-level `hasPushTokens` sync in `src/lib/push.ts` to bypass chore checks completely when users have no push devices registered. Added self-healing client backfill in `useChores.tsx`.
+  - Read usage projected to drop from ~4,896 reads/day to ~288–310 reads/day (~94% reduction).
 

@@ -90,6 +90,18 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
     )
   }, [user])
 
+  // One-time client-side backfill for active tasks missing nextReminderAt
+  useEffect(() => {
+    if (!user || !ready || chores.length === 0) return
+    const unmigrated = chores.filter(
+      (c) => c.archivedAt === null && c.dueAt && c.nextReminderAt === undefined,
+    )
+    if (unmigrated.length === 0) return
+    for (const c of unmigrated) {
+      void updateChoreWrite(user.uid, c.id, {}, c)
+    }
+  }, [user, ready, chores])
+
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
   }, [])
@@ -146,14 +158,15 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
   const updateTask = useCallback(
     (choreId: string, patch: Parameters<typeof updateChoreWrite>[2]) => {
       if (!user) return
+      const existing = chores.find((c) => c.id === choreId)
       runWrite(
         choreId,
-        updateChoreWrite(user.uid, choreId, patch),
+        updateChoreWrite(user.uid, choreId, patch, existing),
         'Could not save task',
       )
       announceLive('Task saved')
     },
-    [announceLive, runWrite, user],
+    [announceLive, chores, runWrite, user],
   )
 
   const completeTask = useCallback(
@@ -236,7 +249,8 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
           }
           parentSubtaskUpdates.delete(choreId)
         }
-        runWrite(choreId, updateChoreWrite(user.uid, choreId, patch), 'Could not move task')
+        const parent = chores.find((c) => c.id === choreId)
+        runWrite(choreId, updateChoreWrite(user.uid, choreId, patch, parent), 'Could not move task')
       }
 
       // Apply remaining subtask-only updates to parent chores

@@ -61,6 +61,12 @@ export async function enablePushNotifications(uid: string): Promise<string> {
     { merge: true },
   )
 
+  await setDoc(
+    doc(getDb(), 'users', uid),
+    { hasPushTokens: true, updatedAt: serverTimestamp() },
+    { merge: true },
+  )
+
   return token
 }
 
@@ -80,6 +86,11 @@ export async function disablePushNotifications(uid: string): Promise<void> {
       }
     }
     await deleteToken(messaging)
+    await setDoc(
+      doc(getDb(), 'users', uid),
+      { hasPushTokens: false, updatedAt: serverTimestamp() },
+      { merge: true },
+    )
   } catch {
     // Best-effort disable.
   }

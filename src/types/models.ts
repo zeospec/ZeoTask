@@ -36,6 +36,10 @@ export interface Chore {
   subtasks: Subtask[]
   reminderEnabled: boolean
   predueHours: number
+  nextReminderAt?: string | null
+  lastDuePushAt?: string | null
+  lastPreduePushAt?: string | null
+  lastOverduePushAt?: string | null
   archivedAt: string | null
   createdAt: string
   updatedAt: string

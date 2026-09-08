@@ -83,13 +83,64 @@ export function subscribeChores(
   )
 }
 
+export function computeNextReminderAt(
+  chore: {
+    dueAt?: string | null
+    reminderEnabled?: boolean
+    predueHours?: number
+    archivedAt?: string | null
+    lastDuePushAt?: string | null
+    lastPreduePushAt?: string | null
+    lastOverduePushAt?: string | null
+  },
+  now = new Date(),
+): string | null {
+  if (chore.archivedAt || chore.reminderEnabled === false || !chore.dueAt) {
+    return null
+  }
+  const dueMs = Date.parse(chore.dueAt)
+  if (Number.isNaN(dueMs)) return null
+
+  const nowMs = now.getTime()
+  const predueHours = chore.predueHours ?? 24
+  const predueMs = dueMs - predueHours * 3600 * 1000
+  const overdueMs = dueMs + 2 * 3600 * 1000
+
+  // 1. Pre-due reminder: fires predueHours before due, as long as due date is still ahead
+  if (!chore.lastPreduePushAt && predueHours > 0 && dueMs > nowMs) {
+    return new Date(predueMs).toISOString()
+  }
+
+  // 2. Due reminder: fires at dueAt
+  if (!chore.lastDuePushAt && overdueMs > nowMs) {
+    return new Date(dueMs).toISOString()
+  }
+
+  // 3. Overdue nudge: fires 2 hours after dueAt (within a 24-hour grace window)
+  if (!chore.lastOverduePushAt && overdueMs > nowMs - 24 * 3600 * 1000) {
+    return new Date(overdueMs).toISOString()
+  }
+
+  return null
+}
+
 function buildPayload(input: ChoreInput, stamp: string): Omit<Chore, 'id'> {
+  const reminderEnabled = input.reminderEnabled ?? true
+  const predueHours = input.predueHours ?? 24
+  const dueAt = input.dueAt ?? null
+  const nextReminderAt = computeNextReminderAt({
+    dueAt,
+    reminderEnabled,
+    predueHours,
+    archivedAt: null,
+  })
+
   return {
     title: input.title.trim(),
     description: input.description?.trim() ?? '',
     priority: input.priority ?? 0,
     status: 'none',
-    dueAt: input.dueAt ?? null,
+    dueAt,
     isRolling: input.isRolling ?? true,
     frequency: input.frequency ?? 'once',
     repeatEvery: input.repeatEvery ?? 1,
@@ -97,8 +148,12 @@ function buildPayload(input: ChoreInput, stamp: string): Omit<Chore, 'id'> {
     labelIds: input.labelIds ?? [],
     projectId: input.projectId ?? null,
     subtasks: input.subtasks ?? [],
-    reminderEnabled: input.reminderEnabled ?? true,
-    predueHours: input.predueHours ?? 24,
+    reminderEnabled,
+    predueHours,
+    nextReminderAt,
+    lastDuePushAt: null,
+    lastPreduePushAt: null,
+    lastOverduePushAt: null,
     archivedAt: null,
     createdAt: stamp,
     updatedAt: stamp,
@@ -130,12 +185,42 @@ export function updateChore(
     lastDuePushAt?: string | null
     lastPreduePushAt?: string | null
     lastOverduePushAt?: string | null
+    nextReminderAt?: string | null
   },
+  existingChore?: Chore,
 ): Promise<void> {
-  return updateDoc(doc(choresCol(uid), choreId), {
+  const finalPatch: Record<string, unknown> = {
     ...patch,
     updatedAt: nowIso(),
-  })
+  }
+
+  // If dueAt, reminderEnabled, or predueHours changed, recompute nextReminderAt
+  if (existingChore) {
+    if ('dueAt' in patch || 'reminderEnabled' in patch || 'predueHours' in patch || 'archivedAt' in patch) {
+      const merged = { ...existingChore, ...patch }
+      if ('dueAt' in patch && patch.dueAt !== existingChore.dueAt) {
+        merged.lastDuePushAt = null
+        merged.lastPreduePushAt = null
+        merged.lastOverduePushAt = null
+        finalPatch.lastDuePushAt = null
+        finalPatch.lastPreduePushAt = null
+        finalPatch.lastOverduePushAt = null
+      }
+      finalPatch.nextReminderAt = computeNextReminderAt(merged)
+    }
+  } else if ('dueAt' in patch || 'reminderEnabled' in patch || 'predueHours' in patch) {
+    if (patch.dueAt === null || patch.reminderEnabled === false || patch.archivedAt) {
+      finalPatch.nextReminderAt = null
+    } else if (patch.dueAt) {
+      finalPatch.nextReminderAt = computeNextReminderAt({
+        dueAt: patch.dueAt,
+        reminderEnabled: patch.reminderEnabled ?? true,
+        predueHours: patch.predueHours ?? 24,
+      })
+    }
+  }
+
+  return updateDoc(doc(choresCol(uid), choreId), finalPatch)
 }
 
 export function completeChore(
@@ -156,6 +241,16 @@ export function completeChore(
     updatedAt: chore.updatedAt,
     status: chore.status,
   }
+
+  const nextReminderAt = nextDue
+    ? computeNextReminderAt({
+        dueAt: nextDue,
+        reminderEnabled: chore.reminderEnabled,
+        predueHours: chore.predueHours,
+        archivedAt: null,
+      })
+    : null
+
   return {
     snapshot,
     nextDue,
@@ -166,6 +261,10 @@ export function completeChore(
       status: 'none',
       subtasks: resetSubtasks,
       archivedAt: nextDue ? null : stamp,
+      nextReminderAt,
+      lastDuePushAt: null,
+      lastPreduePushAt: null,
+      lastOverduePushAt: null,
     }),
   }
 }
@@ -175,8 +274,13 @@ export function undoCompleteChore(
   choreId: string,
   snapshot: ChoreCompleteSnapshot,
 ): Promise<void> {
+  const nextReminderAt = computeNextReminderAt({
+    dueAt: snapshot.dueAt,
+    archivedAt: snapshot.archivedAt,
+  })
   return updateDoc(doc(choresCol(uid), choreId), {
     ...snapshot,
+    nextReminderAt,
     updatedAt: nowIso(),
   })
 }

@@ -182,8 +182,12 @@ function buildGCalEventPayload(chore: Chore) {
         zeoTaskUpdatedAt: chore.updatedAt,
       },
     },
-    // colorId '8' = Graphite/Gray for completed tasks; empty string resets to calendar default
-    colorId: isArchived ? '8' : '',
+  }
+
+  // colorId '8' = Graphite/Gray for completed tasks.
+  // MUST be omitted (not set to '') for non-archived events — the API rejects colorId: '' with 400.
+  if (isArchived) {
+    payload.colorId = '8'
   }
 
   return payload
@@ -288,8 +292,12 @@ function buildGCalSubtaskPayload(subtask: Subtask, parentChore: Chore) {
         zeoTaskUpdatedAt: parentChore.updatedAt,
       },
     },
-    // colorId '8' = Graphite/Gray for completed subtasks; empty string resets to calendar default
-    colorId: isCompleted ? '8' : '',
+  }
+
+  // colorId '8' = Graphite/Gray for completed subtasks.
+  // Omit the field entirely when not completed — API rejects colorId: '' with 400 on insert.
+  if (isCompleted) {
+    payload.colorId = '8'
   }
 
   return payload

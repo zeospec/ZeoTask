@@ -22,32 +22,5 @@
       "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"]
     }
   ],
-  "hosting": {
-    "public": "dist",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-    "rewrites": [{ "source": "**", "destination": "/index.html" }],
-    "headers": [
-      {
-        "source": "/sw.js",
-        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
-      },
-      {
-        "source": "/workbox-*.js",
-        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
-      },
-      {
-        "source": "/manifest.webmanifest",
-        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
-      },
-      {
-        "source": "**",
-        "headers": [
-          {
-            "key": "Cross-Origin-Opener-Policy",
-            "value": "same-origin-allow-popups"
-          }
-        ]
-      }
-    ]
-  }
+  "_comment_hosting": "Frontend is hosted on Netlify — do not add a hosting block here."
 }

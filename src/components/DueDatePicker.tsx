@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from './icons'
 import {
@@ -23,6 +23,7 @@ type Props = {
   onApply: (date: Date | null, isAllDay?: boolean) => void
   onClose: () => void
 }
+
 
 const quickTimes: Array<{ label: string; hour: number; minute: number }> = [
   { label: 'Morning', hour: 9, minute: 0 },
@@ -55,6 +56,11 @@ export function DueDatePicker({ value, isAllDay, onApply, onClose }: Props) {
   const [timeMinute, setTimeMinute] = useState(() =>
     value && !isAllDay ? value.getMinutes() : 0,
   )
+  const [showCustomTime, setShowCustomTime] = useState(() => {
+    if (!value || isAllDay) return false
+    return !matchingQuickTimeLabel(value.getHours(), value.getMinutes())
+  })
+  const timeInputRef = useRef<HTMLInputElement>(null)
 
   const days = useMemo(() => buildCalendar(cursor), [cursor])
 
@@ -161,11 +167,12 @@ export function DueDatePicker({ value, isAllDay, onApply, onClose }: Props) {
         <p className="mb-2 text-[11px] font-semibold tracking-[0.14em] text-[var(--muted)] uppercase">
           Time
         </p>
-        <div className="mb-4 flex flex-wrap gap-2">
+        <div className="mb-1 flex flex-wrap gap-2">
           <button
             type="button"
             onClick={() => {
               setAllDay(true)
+              setShowCustomTime(false)
               if (selected) {
                 setSelected(startOfDay(selected))
               }
@@ -177,6 +184,7 @@ export function DueDatePicker({ value, isAllDay, onApply, onClose }: Props) {
           {quickTimes.map((q) => {
             const active =
               !allDay &&
+              !showCustomTime &&
               Boolean(
                 selected
                   ? selected.getHours() === q.hour && selected.getMinutes() === q.minute
@@ -186,14 +194,56 @@ export function DueDatePicker({ value, isAllDay, onApply, onClose }: Props) {
               <button
                 key={q.label}
                 type="button"
-                onClick={() => applyQuickTime(q.hour, q.minute)}
+                onClick={() => {
+                  applyQuickTime(q.hour, q.minute)
+                  setShowCustomTime(false)
+                }}
                 className={chipClass(active)}
               >
                 {q.label}
               </button>
             )
           })}
+          {/* Custom time chip */}
+          <button
+            type="button"
+            onClick={() => {
+              setShowCustomTime(true)
+              setAllDay(false)
+              // Focus the time input on next paint
+              setTimeout(() => timeInputRef.current?.showPicker?.(), 50)
+            }}
+            className={chipClass(!allDay && showCustomTime)}
+          >
+            Custom…
+          </button>
         </div>
+
+        {/* Inline custom time input — visible only when Custom is active */}
+        {showCustomTime && (
+          <div className="mb-4 flex items-center gap-2 pl-1">
+            <input
+              ref={timeInputRef}
+              type="time"
+              value={`${String(timeHour).padStart(2, '0')}:${String(timeMinute).padStart(2, '0')}`}
+              onChange={(e) => {
+                const [h, m] = e.target.value.split(':').map(Number)
+                if (!isNaN(h) && !isNaN(m)) {
+                  setTimeHour(h)
+                  setTimeMinute(m)
+                  setAllDay(false)
+                  const base = selected ? startOfDay(selected) : startOfDay(new Date())
+                  setSelected(setMinutes(setHours(base, h), m))
+                }
+              }}
+              className="rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--quiet)] px-3 py-1.5 text-sm text-[var(--ink)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40"
+            />
+            <span className="text-xs text-[var(--muted)]">
+              {timeHour < 12 ? 'AM' : 'PM'} · pick any time
+            </span>
+          </div>
+        )}
+        {!showCustomTime && <div className="mb-4" />}
 
         <div className="mb-3 flex items-center justify-between">
           <button

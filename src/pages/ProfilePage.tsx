@@ -9,7 +9,8 @@ import {
   getNotificationSettings,
   saveNotificationSettings,
 } from '../lib/chores'
-import { isFirebaseConfigured, getFirebaseAuth, getFirebaseFunctions, getVapidKey } from '../lib/firebase'
+import { collection, getDocs, query, where } from 'firebase/firestore'
+import { isFirebaseConfigured, getDb, getFirebaseAuth, getFirebaseFunctions, getVapidKey } from '../lib/firebase'
 import { httpsCallable } from 'firebase/functions'
 import { ensureZeoTaskCalendar } from '../lib/gcal'
 import {
@@ -27,7 +28,7 @@ import {
   defaultNotificationSettings,
   formatDigestTime,
 } from '../lib/userSettings'
-import type { GCalIntegrationDoc, NotificationSettings } from '../types/models'
+import type { Chore, GCalCompletedBehavior, GCalIntegrationDoc, NotificationSettings } from '../types/models'
 
 export function ProfilePage() {
   const { user, logout, updateDisplayName } = useAuth()
@@ -87,6 +88,10 @@ export function ProfilePage() {
           const exchangeRes = await exchangeCallable({ code: authCode })
 
           if (exchangeRes.data?.success) {
+            await saveGCalIntegration(user.uid, {
+              needsReauth: false,
+              lastAuthError: null,
+            })
             const updated = await getGCalIntegration(user.uid)
             setGcalDoc(updated)
             const coordinator = getSyncCoordinator(user.uid)
@@ -133,7 +138,10 @@ export function ProfilePage() {
         calendarName: 'ZeoTask',
         accessToken: token,
         expiresAt: now + 3500 * 1000,
-        lastSyncedAt: null,
+        lastSyncedAt: gcalDoc?.lastSyncedAt ?? null,
+        completedTaskBehavior: gcalDoc?.completedTaskBehavior ?? 'keep',
+        needsReauth: false,
+        lastAuthError: null,
       }
 
       await saveGCalIntegration(user.uid, docData)
@@ -152,6 +160,15 @@ export function ProfilePage() {
 
   async function onSyncNowGCal() {
     if (!user) return
+    const isExpired =
+      Boolean(gcalDoc?.needsReauth) ||
+      Boolean(gcalDoc?.expiresAt && gcalDoc.expiresAt <= Date.now() && !gcalDoc.refreshToken)
+
+    if (isExpired) {
+      await onConnectGCal()
+      return
+    }
+
     setGcalBusy(true)
     setGcalMsg(null)
     try {
@@ -168,7 +185,11 @@ export function ProfilePage() {
 
       const updated = await getGCalIntegration(user.uid)
       setGcalDoc(updated)
-      setGcalMsg('Calendar synced successfully')
+      if (updated?.needsReauth) {
+        setGcalMsg('Calendar authorization expired. Please reconnect.')
+      } else {
+        setGcalMsg('Calendar synced successfully')
+      }
     } catch (err) {
       setGcalMsg(err instanceof Error ? err.message : 'Sync failed')
     } finally {
@@ -191,6 +212,41 @@ export function ProfilePage() {
       setGcalMsg('Disconnected Google Calendar')
     } catch (err) {
       setGcalMsg(err instanceof Error ? err.message : 'Could not disconnect')
+    } finally {
+      setGcalBusy(false)
+    }
+  }
+
+  async function onUpdateCompletedBehavior(next: GCalCompletedBehavior) {
+    if (!user || !gcalDoc) return
+    setGcalBusy(true)
+    setGcalMsg(null)
+    try {
+      await saveGCalIntegration(user.uid, { completedTaskBehavior: next })
+      setGcalDoc((prev) => (prev ? { ...prev, completedTaskBehavior: next } : null))
+
+      const coordinator = getSyncCoordinator(user.uid)
+      if (next === 'remove') {
+        // Sweep any existing completed events from GCal so zero leftovers remain
+        const snap = await getDocs(
+          query(
+            collection(getDb(), 'users', user.uid, 'chores'),
+            where('archivedAt', '!=', null),
+          ),
+        )
+        const completedWithGCal = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() } as Chore))
+          .filter((c) => c.gcalEventId || c.subtasks?.some((s) => s.gcalEventId))
+
+        if (completedWithGCal.length > 0) {
+          await coordinator.sweepCompletedEvents(completedWithGCal)
+        }
+        setGcalMsg('Completed tasks will be removed from Google Calendar')
+      } else {
+        setGcalMsg('Completed tasks will stay on Google Calendar in Graphite Gray (✓)')
+      }
+    } catch (err) {
+      setGcalMsg(err instanceof Error ? err.message : 'Could not update calendar setting')
     } finally {
       setGcalBusy(false)
     }
@@ -517,79 +573,173 @@ export function ProfilePage() {
         </div>
 
         <div className="mt-4 border-t border-[var(--hairline)] pt-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <CalendarIcon size={18} className="text-[var(--accent)]" />
-              <h3 className="text-sm font-semibold text-[var(--ink)]">
-                Google Calendar 2-Way Sync
-              </h3>
-            </div>
-            {gcalDoc?.enabled && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                Active
-              </span>
-            )}
-          </div>
+          {(() => {
+            const isGCalExpired =
+              Boolean(gcalDoc?.needsReauth) ||
+              Boolean(gcalDoc?.expiresAt && gcalDoc.expiresAt <= Date.now() && !gcalDoc.refreshToken)
 
-          <p className="mt-1 text-xs text-[var(--muted)]">
-            Two-way sync with a dedicated <strong>"ZeoTask"</strong> calendar in Google Calendar. All-day tasks sit in the all-day banner; timed tasks sync as 30-min slots. Deleting in either place deletes on both sides.
-          </p>
-
-          {gcalDoc?.enabled ? (
-            <div className="mt-3 space-y-3">
-              <div className="rounded-xl border border-[var(--hairline)] bg-[var(--surface-sunken)] p-3 text-xs">
+            return (
+              <>
                 <div className="flex items-center justify-between">
-                  <span className="text-[var(--muted)]">Calendar</span>
-                  <span className="font-medium text-[var(--ink)]">
-                    {gcalDoc.calendarName || 'ZeoTask'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <CalendarIcon size={18} className="text-[var(--accent)]" />
+                    <h3 className="text-sm font-semibold text-[var(--ink)]">
+                      Google Calendar 2-Way Sync
+                    </h3>
+                  </div>
+                  {gcalDoc?.enabled && (
+                    isGCalExpired ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                        Reconnect Required
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                        Active
+                      </span>
+                    )
+                  )}
                 </div>
-                <div className="mt-1.5 flex items-center justify-between">
-                  <span className="text-[var(--muted)]">Last synced</span>
-                  <span className="font-mono-meta text-[var(--ink)]">
-                    {gcalDoc.lastSyncedAt
-                      ? new Date(gcalDoc.lastSyncedAt).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                      : 'Never'}
-                  </span>
-                </div>
-              </div>
 
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  disabled={gcalBusy}
-                  onClick={() => void onSyncNowGCal()}
-                  className="focus-ring inline-flex items-center gap-2 rounded-[var(--radius-control)] bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
-                >
-                  {gcalBusy ? 'Syncing...' : 'Sync Now'}
-                </button>
-                <button
-                  type="button"
-                  disabled={gcalBusy}
-                  onClick={() => void onDisconnectGCal()}
-                  className="focus-ring rounded-[var(--radius-control)] border border-[var(--hairline)] px-3 py-2 text-sm text-[var(--muted)] hover:bg-[var(--quiet)]"
-                >
-                  Disconnect
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="mt-3">
-              <button
-                type="button"
-                disabled={gcalBusy}
-                onClick={() => void onConnectGCal()}
-                className="focus-ring inline-flex items-center gap-2 rounded-[var(--radius-control)] bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[var(--accent-pressed)] disabled:opacity-50"
-              >
-                <CalendarIcon size={16} />
-                {gcalBusy ? 'Connecting...' : 'Connect Google Calendar'}
-              </button>
-            </div>
-          )}
+                <p className="mt-1 text-xs text-[var(--muted)]">
+                  Two-way sync with a dedicated <strong>"ZeoTask"</strong> calendar in Google Calendar. All-day tasks sit in the all-day banner; timed tasks sync as 30-min slots. Deleting in either place deletes on both sides.
+                </p>
+
+                {gcalDoc?.enabled ? (
+                  <div className="mt-3 space-y-3">
+                    {isGCalExpired && (
+                      <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200">
+                        <div className="flex items-start gap-2">
+                          <span className="text-amber-600 dark:text-amber-400 font-bold mt-0.5">⚠️</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-[var(--ink)]">Google Calendar session expired</p>
+                            <p className="mt-0.5 text-[11px] text-[var(--muted)] leading-relaxed">
+                              Your authorization has expired. Click <strong>Reconnect Google Calendar</strong> below to restore automatic 2-way sync with your dedicated "ZeoTask" calendar.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="rounded-xl border border-[var(--hairline)] bg-[var(--surface-sunken)] p-3 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[var(--muted)]">Calendar</span>
+                        <span className="font-medium text-[var(--ink)]">
+                          {gcalDoc.calendarName || 'ZeoTask'}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 flex items-center justify-between">
+                        <span className="text-[var(--muted)]">Last synced</span>
+                        <span className="font-mono-meta text-[var(--ink)]">
+                          {gcalDoc.lastSyncedAt
+                            ? new Date(gcalDoc.lastSyncedAt).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })
+                            : 'Never'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-[var(--hairline)] bg-[var(--surface-sunken)] p-3 text-xs space-y-2.5">
+                      <div>
+                        <span className="font-semibold text-[var(--ink)] block">
+                          Completed Tasks on Calendar
+                        </span>
+                        <span className="text-[11px] text-[var(--muted)] block mt-0.5">
+                          Choose what happens to Google Calendar events when you complete a task in ZeoTask.
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={gcalBusy}
+                          onClick={() => void onUpdateCompletedBehavior('keep')}
+                          className={`flex items-start gap-2.5 p-2.5 rounded-[var(--radius-control)] border text-left transition ${
+                            (gcalDoc.completedTaskBehavior ?? 'keep') === 'keep'
+                              ? 'border-[var(--accent)] bg-[var(--accent-wash)] ring-1 ring-[var(--accent)] text-[var(--ink)]'
+                              : 'border-[var(--hairline)] bg-[var(--surface)] text-[var(--muted)] hover:border-[var(--ink)]/30'
+                          }`}
+                        >
+                          <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">✓</span>
+                          <div>
+                            <div className="text-xs font-semibold text-[var(--ink)]">Keep on calendar</div>
+                            <div className="text-[11px] text-[var(--muted)] mt-0.5 leading-relaxed">
+                              Prefixed with ✓ and marked Graphite Gray. Keeps a record of finished work.
+                            </div>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={gcalBusy}
+                          onClick={() => void onUpdateCompletedBehavior('remove')}
+                          className={`flex items-start gap-2.5 p-2.5 rounded-[var(--radius-control)] border text-left transition ${
+                            gcalDoc.completedTaskBehavior === 'remove'
+                              ? 'border-[var(--accent)] bg-[var(--accent-wash)] ring-1 ring-[var(--accent)] text-[var(--ink)]'
+                              : 'border-[var(--hairline)] bg-[var(--surface)] text-[var(--muted)] hover:border-[var(--ink)]/30'
+                          }`}
+                        >
+                          <span className="text-sm font-bold text-[var(--muted)] mt-0.5">✕</span>
+                          <div>
+                            <div className="text-xs font-semibold text-[var(--ink)]">Remove from calendar</div>
+                            <div className="text-[11px] text-[var(--muted)] mt-0.5 leading-relaxed">
+                              Immediately deletes events upon completion to keep your calendar clear.
+                            </div>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {isGCalExpired ? (
+                        <button
+                          type="button"
+                          disabled={gcalBusy}
+                          onClick={() => void onConnectGCal()}
+                          className="focus-ring inline-flex items-center gap-2 rounded-[var(--radius-control)] bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition hover:bg-[var(--accent-pressed)] disabled:opacity-50"
+                        >
+                          <CalendarIcon size={16} />
+                          {gcalBusy ? 'Connecting...' : 'Reconnect Google Calendar'}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={gcalBusy}
+                          onClick={() => void onSyncNowGCal()}
+                          className="focus-ring inline-flex items-center gap-2 rounded-[var(--radius-control)] bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                        >
+                          {gcalBusy ? 'Syncing...' : 'Sync Now'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={gcalBusy}
+                        onClick={() => void onDisconnectGCal()}
+                        className="focus-ring rounded-[var(--radius-control)] border border-[var(--hairline)] px-3 py-2 text-sm text-[var(--muted)] hover:bg-[var(--quiet)]"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      disabled={gcalBusy}
+                      onClick={() => void onConnectGCal()}
+                      className="focus-ring inline-flex items-center gap-2 rounded-[var(--radius-control)] bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[var(--accent-pressed)] disabled:opacity-50"
+                    >
+                      <CalendarIcon size={16} />
+                      {gcalBusy ? 'Connecting...' : 'Connect Google Calendar'}
+                    </button>
+                  </div>
+                )}
+              </>
+            )
+          })()}
 
           {gcalMsg && (
             <p className="mt-2 text-xs text-[var(--muted)]" aria-live="polite">

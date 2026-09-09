@@ -108,6 +108,8 @@ export interface GCalSyncSettings {
   lastSyncAt?: string
 }
 
+export type GCalCompletedBehavior = 'keep' | 'remove'
+
 export interface GCalIntegrationDoc {
   enabled: boolean
   calendarId: string
@@ -118,6 +120,9 @@ export interface GCalIntegrationDoc {
   syncToken?: string | null
   lastSyncedAt?: string | null
   tombstones?: string[]
+  completedTaskBehavior?: GCalCompletedBehavior
+  needsReauth?: boolean
+  lastAuthError?: string | null
 }
 
 export interface CustomView {

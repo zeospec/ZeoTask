@@ -250,6 +250,61 @@ export const bucketTitle: Record<ChoreBucket, string> = {
   anytime: 'Anytime',
 }
 
+/**
+ * Priority ranking helper:
+ * 1 (P1 Urgent) -> highest rank (1)
+ * 2 (P2 High)   -> rank (2)
+ * 3 (P3 Medium) -> rank (3)
+ * 4 (P4 Low)    -> rank (4)
+ * 0 (No Priority) -> lowest rank (999)
+ */
+function priorityRank(p: number | undefined): number {
+  if (!p || p <= 0) return 999
+  return p
+}
+
+/**
+ * Strict chronological comparator for chores:
+ * 1. Tasks ending earliest (lowest due timestamp) always come first.
+ * 2. If a task is all-day without an explicit time, its deadline is the end of that day (23:59:59.999),
+ *    ensuring that tasks with explicit earlier times in that day (e.g., 8:59 PM) appear above it.
+ * 3. Tie-breaker 1: Urgent priority first (P1 Urgent > P2 High > P3 Medium > P4 Low > None).
+ * 4. Tie-breaker 2: Alphabetical by title.
+ * 5. Tie-breaker 3: Creation timestamp / ID stability.
+ */
+export function byDue(a: Chore, b: Chore): number {
+  const aDate = parseChoreDue(a.dueAt)
+  const bDate = parseChoreDue(b.dueAt)
+
+  if (!aDate && !bDate) {
+    const pDiff = priorityRank(a.priority) - priorityRank(b.priority)
+    if (pDiff !== 0) return pDiff
+    return String(a.createdAt || a.id).localeCompare(String(b.createdAt || b.id))
+  }
+  if (!aDate) return 1
+  if (!bDate) return -1
+
+  // Epoch timestamp comparison eliminates timezone format mismatches (e.g. UTC Z vs +05:30)
+  const aTime = a.isAllDay ? endOfDay(aDate).getTime() : aDate.getTime()
+  const bTime = b.isAllDay ? endOfDay(bDate).getTime() : bDate.getTime()
+
+  if (aTime !== bTime) {
+    return aTime - bTime
+  }
+
+  // Deterministic tie-breakers for tasks with identical due times:
+  // 1. Priority first (P1 Urgent > P2 High > P3 Medium > P4 Low > None)
+  const pDiff = priorityRank(a.priority) - priorityRank(b.priority)
+  if (pDiff !== 0) return pDiff
+
+  // 2. Title alphabetical
+  const tCmp = String(a.title || '').localeCompare(String(b.title || ''))
+  if (tCmp !== 0) return tCmp
+
+  // 3. Stable creation timestamp / ID
+  return String(a.createdAt || a.id).localeCompare(String(b.createdAt || b.id))
+}
+
 export function groupChores(chores: Chore[]) {
   const groups: Record<ChoreBucket, Chore[]> = {
     overdue: [],
@@ -264,31 +319,10 @@ export function groupChores(chores: Chore[]) {
     if (chore.archivedAt) continue
     groups[bucketForChore(chore)].push(chore)
   }
-  const byDue = (a: Chore, b: Chore) => {
-    if (!a.dueAt && !b.dueAt) {
-      const pDiff = (b.priority ?? 0) - (a.priority ?? 0)
-      if (pDiff !== 0) return pDiff
-      return String(a.createdAt || a.id).localeCompare(String(b.createdAt || b.id))
-    }
-    if (!a.dueAt) return 1
-    if (!b.dueAt) return -1
-    const dueCmp = String(a.dueAt).localeCompare(String(b.dueAt))
-    if (dueCmp !== 0) return dueCmp
-
-    // Deterministic tie-breakers for tasks with identical due dates:
-    // 1. Higher priority first
-    const pDiff = (b.priority ?? 0) - (a.priority ?? 0)
-    if (pDiff !== 0) return pDiff
-    // 2. Title alphabetical
-    const tCmp = String(a.title || '').localeCompare(String(b.title || ''))
-    if (tCmp !== 0) return tCmp
-    // 3. Stable creation timestamp / ID
-    return String(a.createdAt || a.id).localeCompare(String(b.createdAt || b.id))
-  }
   for (const key of bucketOrder) {
     if (key === 'anytime') {
       groups[key].sort((a, b) => {
-        const pDiff = (b.priority ?? 0) - (a.priority ?? 0)
+        const pDiff = priorityRank(a.priority) - priorityRank(b.priority)
         if (pDiff !== 0) return pDiff
         const tCmp = String(a.title || '').localeCompare(String(b.title || ''))
         if (tCmp !== 0) return tCmp

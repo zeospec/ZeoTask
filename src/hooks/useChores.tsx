@@ -46,9 +46,13 @@ type ChoresContextValue = {
   pushToast: (message: string, action?: ToastAction) => void
   announceLive: (message: string) => void
   createTask: (input: ChoreInput) => string
-  updateTask: (choreId: string, patch: Parameters<typeof updateChoreWrite>[2]) => void
+  updateTask: (
+    choreId: string,
+    patch: Parameters<typeof updateChoreWrite>[2],
+    existingChore?: Chore,
+  ) => void
   completeTask: (chore: Chore) => void
-  deleteTask: (choreId: string, title?: string) => void
+  deleteTask: (choreId: string, title?: string, gcalEventId?: string | null) => void
   moveOverdueToToday: (chores: Chore[]) => void
   completeSubtask: (parentChoreId: string, subtaskId: string) => void
   updateSubtaskItem: (parentChoreId: string, subtaskId: string, updates: Partial<Subtask>) => void
@@ -69,6 +73,8 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
   const [announce, setAnnounce] = useState('')
   const undoRef = useRef<Map<string, ChoreCompleteSnapshot>>(new Map())
+  const choresRef = useRef(chores)
+  choresRef.current = chores
 
   useEffect(() => {
     if (!user) {
@@ -82,6 +88,7 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       user.uid,
       (next, meta) => {
         setChores(next)
+        getSyncCoordinator(user.uid).setLocalChores(next)
         setReady(true)
         setError(null)
         setSyncing(meta.hasPendingWrites)
@@ -97,21 +104,21 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        void coordinator.triggerSync('visibility-change', chores)
+        void coordinator.triggerSync('visibility-change', choresRef.current)
       }
     }
     const onWindowFocus = () => {
-      void coordinator.triggerSync('window-focus', chores)
+      void coordinator.triggerSync('window-focus', choresRef.current)
     }
 
     document.addEventListener('visibilitychange', onVisibilityChange)
     window.addEventListener('focus', onWindowFocus)
 
-    void coordinator.triggerSync('app-init', chores)
+    void coordinator.triggerSync('app-init', choresRef.current)
 
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') {
-        void coordinator.triggerSync('interval', chores)
+        void coordinator.triggerSync('interval', choresRef.current)
       }
     }, 5 * 60 * 1000)
 
@@ -120,7 +127,7 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('focus', onWindowFocus)
       clearInterval(interval)
     }
-  }, [user, chores])
+  }, [user])
 
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
@@ -207,15 +214,27 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
   )
 
   const updateTask = useCallback(
-    (choreId: string, patch: Parameters<typeof updateChoreWrite>[2]) => {
+    (
+      choreId: string,
+      patch: Parameters<typeof updateChoreWrite>[2],
+      existingChore?: Chore,
+    ) => {
       if (!user) return
-      const existing = chores.find((c) => c.id === choreId)
+      const existing = existingChore ?? chores.find((c) => c.id === choreId)
       runWrite(
         choreId,
         updateChoreWrite(user.uid, choreId, patch, existing),
         'Could not save task',
       )
       if (existing) {
+        if (patch.subtasks && existing.subtasks) {
+          const nextSubIds = new Set(patch.subtasks.map((s) => s.id))
+          for (const oldSub of existing.subtasks) {
+            if (oldSub.gcalEventId && !nextSubIds.has(oldSub.id)) {
+              void getSyncCoordinator(user.uid).handleDeleteChore(oldSub.gcalEventId)
+            }
+          }
+        }
         const merged = { ...existing, ...patch, updatedAt: new Date().toISOString() }
         getSyncCoordinator(user.uid).enqueueOutboundChore(merged)
       }
@@ -232,18 +251,7 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       runWrite(chore.id, promise, 'Could not complete task')
 
       const coordinator = getSyncCoordinator(user.uid)
-      if (nextDue) {
-        // Recurring chore: update Google Calendar event with the new nextDue date
-        coordinator.enqueueOutboundChore({
-          ...chore,
-          dueAt: nextDue,
-          archivedAt: null,
-          updatedAt: new Date().toISOString(),
-        })
-      } else if (chore.gcalEventId) {
-        // Non-recurring chore: task is completed/archived, delete event from Google Calendar
-        void coordinator.handleDeleteChore(chore.gcalEventId)
-      }
+      void coordinator.handleCompleteChore(chore, nextDue)
 
       const title = chore.title
       announceLive(`Completed ${title}`)
@@ -276,11 +284,20 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
   )
 
   const deleteTask = useCallback(
-    (choreId: string, title?: string) => {
+    (choreId: string, title?: string, gcalEventId?: string | null) => {
       if (!user) return
-      const target = chores.find((c) => c.id === choreId)
-      if (target?.gcalEventId) {
-        void getSyncCoordinator(user.uid).handleDeleteChore(target.gcalEventId)
+      const existing = chores.find((c) => c.id === choreId)
+      const eventId = gcalEventId || existing?.gcalEventId
+      const coordinator = getSyncCoordinator(user.uid)
+      if (eventId) {
+        void coordinator.handleDeleteChore(eventId)
+      }
+      if (existing?.subtasks) {
+        for (const s of existing.subtasks) {
+          if (s.gcalEventId) {
+            void coordinator.handleDeleteChore(s.gcalEventId)
+          }
+        }
       }
       runWrite(choreId, deleteChoreWrite(user.uid, choreId), 'Could not delete task')
       announceLive(title ? `Deleted ${title}` : 'Task deleted')

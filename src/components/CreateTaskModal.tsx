@@ -1481,7 +1481,7 @@ function Menu({
       <div
         className={[
           'fixed inset-x-0 bottom-0 z-[70] max-h-[75dvh] overflow-y-auto rounded-t-2xl border-t border-[var(--hairline)] bg-[var(--surface)] p-3 shadow-2xl pb-[calc(1.25rem+env(safe-area-inset-bottom))]',
-          'sm:absolute sm:inset-x-auto sm:bottom-auto sm:top-full sm:z-30 sm:mt-2 sm:w-68 sm:max-h-72 sm:rounded-[12px] sm:border sm:border-[var(--hairline)] sm:p-1.5 sm:shadow-[var(--shadow-card)]',
+          'sm:absolute sm:inset-x-auto sm:bottom-auto sm:top-full sm:z-[70] sm:mt-2 sm:w-68 sm:max-h-72 sm:rounded-[12px] sm:border sm:border-[var(--hairline)] sm:p-1.5 sm:shadow-[var(--shadow-card)]',
           align === 'right' ? 'sm:right-0 sm:left-auto' : 'sm:left-0 sm:right-auto',
         ].join(' ')}
       >

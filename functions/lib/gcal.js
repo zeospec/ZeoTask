@@ -5,6 +5,8 @@ exports.refreshGoogleToken = refreshGoogleToken;
 exports.ensureBackendZeoTaskCalendar = ensureBackendZeoTaskCalendar;
 exports.getValidBackendToken = getValidBackendToken;
 exports.computeChoreNextReminder = computeChoreNextReminder;
+exports.cleanGCalTitle = cleanGCalTitle;
+exports.extractGCalDescription = extractGCalDescription;
 exports.syncGCalForUser = syncGCalForUser;
 const firebase_functions_1 = require("firebase-functions");
 const firestore_1 = require("firebase-admin/firestore");
@@ -129,6 +131,10 @@ async function getValidBackendToken(db, uid, integration, clientId, clientSecret
             firebase_functions_1.logger.warn('Background token refresh failed:', err);
         }
     }
+    // If token has expired and could not be renewed, return null
+    if (expiresAt && now >= expiresAt) {
+        return null;
+    }
     return accessToken || null;
 }
 /**
@@ -155,6 +161,27 @@ function computeChoreNextReminder(chore, now) {
 }
 function stripHtml(html) {
     return html.replace(/<[^>]*>?/gm, '').trim();
+}
+function cleanGCalTitle(summary) {
+    if (!summary)
+        return 'Untitled Task';
+    return summary.replace(/^[✓✔]\s*/, '').trim() || 'Untitled Task';
+}
+function extractGCalDescription(eventDesc) {
+    if (!eventDesc)
+        return '';
+    const checklistIdx = eventDesc.indexOf('\n\nChecklist:\n');
+    if (checklistIdx !== -1) {
+        return eventDesc.substring(0, checklistIdx).trim();
+    }
+    const altChecklistIdx = eventDesc.indexOf('Checklist:\n');
+    if (altChecklistIdx === 0) {
+        return '';
+    }
+    if (altChecklistIdx !== -1) {
+        return eventDesc.substring(0, altChecklistIdx).trim();
+    }
+    return eventDesc.trim();
 }
 function buildBackendGCalPayload(chore) {
     const isAllDay = Boolean(chore.isAllDay);
@@ -196,11 +223,15 @@ function buildBackendGCalPayload(chore) {
             ? `${plainDesc}\n\nChecklist:\n${checklistText}`
             : `Checklist:\n${checklistText}`;
     }
+    const rawTitle = cleanGCalTitle(chore.title);
+    const isCompleted = Boolean(chore.archivedAt);
+    const summary = isCompleted ? `✓ ${rawTitle}` : rawTitle;
     return {
-        summary: chore.title || 'Untitled Task',
+        summary,
         description: plainDesc,
         start,
         end,
+        colorId: isCompleted ? '8' : '',
         extendedProperties: {
             private: {
                 zeoTaskId: chore.id,
@@ -238,11 +269,18 @@ function buildBackendGCalSubtaskPayload(subtask, parentChore) {
         start = { date: todayStr };
         end = { date: todayStr };
     }
+    const rawSubtaskTitle = cleanGCalTitle(subtask.title);
+    const rawParentTitle = cleanGCalTitle(parentChore.title);
+    const isDone = Boolean(subtask.completed || parentChore.archivedAt);
+    const summary = isDone
+        ? `↳ ✓ ${rawSubtaskTitle} (${rawParentTitle})`
+        : `↳ ${rawSubtaskTitle} (${rawParentTitle})`;
     return {
-        summary: `↳ ${subtask.title || 'Checklist item'} (${parentChore.title || 'Task'})`,
-        description: `Checklist item for: ${parentChore.title || 'Task'}`,
+        summary,
+        description: `Checklist item for: ${rawParentTitle}`,
         start,
         end,
+        colorId: isDone ? '8' : '',
         extendedProperties: {
             private: {
                 zeoTaskId: parentChore.id,
@@ -335,6 +373,7 @@ async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
     const calendarId = integration.calendarId;
     const syncToken = integration.syncToken || null;
     const tombstones = new Set(integration.tombstones || []);
+    const completedBehavior = integration.completedTaskBehavior || 'keep';
     const now = new Date();
     const nowIso = now.toISOString();
     // 1. Inbound Pull from Google Calendar
@@ -379,9 +418,16 @@ async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
                 .get();
             if (!matchSnap.empty) {
                 const choreDoc = matchSnap.docs[0];
-                firebase_functions_1.logger.info('Deleting chore deleted in Google Calendar', { uid, choreId: choreDoc.id });
+                const choreData = choreDoc.data();
                 tombstones.add(event.id);
-                await choreDoc.ref.delete();
+                if (choreData.archivedAt) {
+                    // If already completed in ZeoTask, just clear gcalEventId rather than deleting user archive
+                    await choreDoc.ref.update({ gcalEventId: null });
+                }
+                else {
+                    firebase_functions_1.logger.info('Deleting chore deleted in Google Calendar', { uid, choreId: choreDoc.id });
+                    await choreDoc.ref.delete();
+                }
                 continue;
             }
             // Check if cancelled event was a subtask
@@ -395,7 +441,7 @@ async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
                     if (sIdx !== undefined && sIdx >= 0 && pData.subtasks) {
                         tombstones.add(event.id);
                         const nextSubtasks = [...pData.subtasks];
-                        nextSubtasks[sIdx] = { ...nextSubtasks[sIdx], completed: true, gcalEventId: null };
+                        nextSubtasks[sIdx] = { ...nextSubtasks[sIdx], dueAt: null, gcalEventId: null };
                         await parentDoc.ref.update({
                             subtasks: nextSubtasks,
                             updatedAt: firestore_1.FieldValue.serverTimestamp(),
@@ -408,7 +454,6 @@ async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
         // C. Event Modified or Created in Google Calendar
         const zeoTaskId = event.extendedProperties?.private?.zeoTaskId;
         const zeoSubtaskId = event.extendedProperties?.private?.zeoSubtaskId;
-        const zeoTaskUpdatedAt = event.extendedProperties?.private?.zeoTaskUpdatedAt;
         // Handle subtask event modified in Google Calendar
         if (zeoSubtaskId && zeoTaskId) {
             const parentDoc = await db.doc(`users/${uid}/chores/${zeoTaskId}`).get();
@@ -418,7 +463,7 @@ async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
                 if (sIdx !== undefined && sIdx >= 0 && pData.subtasks) {
                     const s = pData.subtasks[sIdx];
                     // Anti-Echo check
-                    if (zeoTaskUpdatedAt && zeoTaskUpdatedAt === pData.updatedAt) {
+                    if (s.gcalLastSyncedAt && event.updated === s.gcalLastSyncedAt) {
                         continue;
                     }
                     const isAllDay = Boolean(event.start.date && !event.start.dateTime);
@@ -457,7 +502,7 @@ async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
         if (targetChoreDoc) {
             const chore = targetChoreDoc.data();
             // Anti-Echo Check: if timestamp matches, it is ZeoTask's own echo
-            if (zeoTaskUpdatedAt && zeoTaskUpdatedAt === chore.updatedAt) {
+            if (chore.gcalLastSyncedAt && event.updated === chore.gcalLastSyncedAt) {
                 continue;
             }
             const choreUpdatedMs = Date.parse(chore.updatedAt || '') || 0;
@@ -466,10 +511,14 @@ async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
             if (eventUpdatedMs > choreUpdatedMs) {
                 const isAllDay = Boolean(event.start.date && !event.start.dateTime);
                 const dueAt = event.start.date || event.start.dateTime || null;
-                const title = (event.summary || chore.title || 'Task').trim();
+                const title = cleanGCalTitle(event.summary) || chore.title || 'Task';
+                const description = event.description !== undefined
+                    ? extractGCalDescription(event.description)
+                    : (chore.description || '');
                 const updatedChoreState = {
                     ...chore,
                     title,
+                    description,
                     dueAt,
                     isAllDay,
                     gcalEventId: event.id,
@@ -479,6 +528,7 @@ async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
                 const nextReminderAt = computeChoreNextReminder(updatedChoreState, now);
                 await targetChoreDoc.ref.update({
                     title,
+                    description,
                     dueAt,
                     isAllDay,
                     gcalEventId: event.id,
@@ -492,10 +542,11 @@ async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
             // Inbound event created directly in Google Calendar: Import into ZeoTask!
             const isAllDay = Boolean(event.start.date && !event.start.dateTime);
             const dueAt = event.start.date || event.start.dateTime || null;
-            const title = (event.summary || 'Calendar Task').trim();
+            const title = cleanGCalTitle(event.summary) || 'Calendar Task';
+            const description = extractGCalDescription(event.description);
             const newChore = {
                 title,
-                description: '',
+                description,
                 priority: 0,
                 status: 'none',
                 dueAt,
@@ -538,18 +589,65 @@ async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
     const choresSnap = await choresQuery.get();
     for (const doc of choresSnap.docs) {
         const chore = { id: doc.id, ...doc.data() };
-        // Case A: Chore archived/completed OR due date removed, delete from GCal
-        if ((chore.archivedAt || !chore.dueAt) && chore.gcalEventId) {
+        // Case A: Chore due date was removed, delete from GCal
+        if (!chore.dueAt && chore.gcalEventId) {
             tombstones.add(chore.gcalEventId);
             await deleteChoreFromGCalBackend(chore.gcalEventId, calendarId, token);
+            if (chore.subtasks) {
+                for (const s of chore.subtasks) {
+                    if (s.gcalEventId) {
+                        tombstones.add(s.gcalEventId);
+                        await deleteChoreFromGCalBackend(s.gcalEventId, calendarId, token);
+                    }
+                }
+            }
             await doc.ref.update({
                 gcalEventId: null,
                 gcalLastSyncedAt: nowIso,
             });
             chore.gcalEventId = null;
         }
+        else if (chore.archivedAt) {
+            // Case B: Chore completed/archived
+            if (completedBehavior === 'remove') {
+                if (chore.gcalEventId) {
+                    tombstones.add(chore.gcalEventId);
+                    await deleteChoreFromGCalBackend(chore.gcalEventId, calendarId, token);
+                    if (chore.subtasks) {
+                        for (const s of chore.subtasks) {
+                            if (s.gcalEventId) {
+                                tombstones.add(s.gcalEventId);
+                                await deleteChoreFromGCalBackend(s.gcalEventId, calendarId, token);
+                            }
+                        }
+                    }
+                    await doc.ref.update({
+                        gcalEventId: null,
+                        gcalLastSyncedAt: nowIso,
+                    });
+                    chore.gcalEventId = null;
+                }
+            }
+            else {
+                // completedBehavior === 'keep': update to ✓ and graphite gray if it has gcalEventId
+                if (chore.gcalEventId && chore.dueAt) {
+                    const needsPush = !chore.gcalLastSyncedAt ||
+                        (chore.updatedAt && chore.updatedAt > chore.gcalLastSyncedAt);
+                    if (needsPush) {
+                        const pushResult = await pushChoreToGCalBackend(chore, calendarId, token);
+                        if (pushResult) {
+                            await doc.ref.update({
+                                gcalEventId: pushResult.gcalEventId,
+                                gcalLastSyncedAt: pushResult.updated,
+                            });
+                            chore.gcalLastSyncedAt = pushResult.updated;
+                        }
+                    }
+                }
+            }
+        }
         else if (!chore.archivedAt && chore.dueAt) {
-            // Case B: Chore active with due date, check if outbound push needed
+            // Case C: Active chore with due date
             const needsPush = !chore.gcalEventId ||
                 !chore.gcalLastSyncedAt ||
                 (chore.updatedAt && chore.updatedAt > chore.gcalLastSyncedAt);
@@ -571,24 +669,61 @@ async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
             const nextSubtasks = [...chore.subtasks];
             for (let i = 0; i < nextSubtasks.length; i++) {
                 const s = nextSubtasks[i];
-                if (s.dueAt && !s.completed && !chore.archivedAt) {
-                    const needsSubPush = !s.gcalEventId ||
-                        !s.gcalLastSyncedAt ||
-                        (chore.updatedAt && chore.updatedAt > s.gcalLastSyncedAt);
-                    if (needsSubPush) {
-                        const pushResult = await pushSubtaskToGCalBackend(s, chore, calendarId, token);
-                        if (pushResult &&
-                            (s.gcalEventId !== pushResult.gcalEventId || s.gcalLastSyncedAt !== pushResult.updated)) {
-                            nextSubtasks[i] = {
-                                ...s,
-                                gcalEventId: pushResult.gcalEventId,
-                                gcalLastSyncedAt: pushResult.updated,
-                            };
-                            subtasksModified = true;
+                const isSubDone = Boolean(s.completed || chore.archivedAt);
+                if (s.dueAt) {
+                    if (isSubDone) {
+                        if (completedBehavior === 'keep') {
+                            if (s.gcalEventId) {
+                                const needsSubPush = !s.gcalLastSyncedAt ||
+                                    (chore.updatedAt && chore.updatedAt > s.gcalLastSyncedAt);
+                                if (needsSubPush) {
+                                    const pushResult = await pushSubtaskToGCalBackend(s, chore, calendarId, token);
+                                    if (pushResult) {
+                                        nextSubtasks[i] = {
+                                            ...s,
+                                            gcalEventId: pushResult.gcalEventId,
+                                            gcalLastSyncedAt: pushResult.updated,
+                                        };
+                                        subtasksModified = true;
+                                    }
+                                }
+                            }
+                        }
+                        else {
+                            // completedBehavior === 'remove'
+                            if (s.gcalEventId) {
+                                tombstones.add(s.gcalEventId);
+                                await deleteChoreFromGCalBackend(s.gcalEventId, calendarId, token);
+                                nextSubtasks[i] = {
+                                    ...s,
+                                    gcalEventId: null,
+                                    gcalLastSyncedAt: nowIso,
+                                };
+                                subtasksModified = true;
+                            }
+                        }
+                    }
+                    else {
+                        // Active subtask
+                        const needsSubPush = !s.gcalEventId ||
+                            !s.gcalLastSyncedAt ||
+                            (chore.updatedAt && chore.updatedAt > s.gcalLastSyncedAt);
+                        if (needsSubPush) {
+                            const pushResult = await pushSubtaskToGCalBackend(s, chore, calendarId, token);
+                            if (pushResult &&
+                                (s.gcalEventId !== pushResult.gcalEventId || s.gcalLastSyncedAt !== pushResult.updated)) {
+                                nextSubtasks[i] = {
+                                    ...s,
+                                    gcalEventId: pushResult.gcalEventId,
+                                    gcalLastSyncedAt: pushResult.updated,
+                                };
+                                subtasksModified = true;
+                            }
                         }
                     }
                 }
-                else if (s.gcalEventId && (s.completed || !s.dueAt || chore.archivedAt)) {
+                else if (s.gcalEventId) {
+                    // Due date removed
                     tombstones.add(s.gcalEventId);
                     await deleteChoreFromGCalBackend(s.gcalEventId, calendarId, token);
                     nextSubtasks[i] = {

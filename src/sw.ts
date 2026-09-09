@@ -14,13 +14,27 @@ declare let self: ServiceWorkerGlobalScope & {
 }
 
 clientsClaim()
-precacheAndRoute(self.__WB_MANIFEST)
+
+// workbox-build (injectManifest) requires exactly ONE occurrence of self.__WB_MANIFEST.
+// Store it in a const so we can reference it multiple times safely.
+const WB_MANIFEST = self.__WB_MANIFEST
+precacheAndRoute(WB_MANIFEST)
 cleanupOutdatedCaches()
-registerRoute(
-  new NavigationRoute(createHandlerBoundToURL('/index.html'), {
-    denylist: [/^\/api\//],
-  }),
-)
+
+// Only register the navigation route when /index.html is actually precached.
+// In dev mode the manifest is empty, so createHandlerBoundToURL would throw
+// "non-precached-url" for every navigation request.
+const isPrecached = WB_MANIFEST.some((entry) => {
+  const url = typeof entry === 'string' ? entry : entry.url
+  return url === '/index.html' || url.includes('index.html')
+})
+if (isPrecached) {
+  registerRoute(
+    new NavigationRoute(createHandlerBoundToURL('/index.html'), {
+      denylist: [/^\/api\//],
+    }),
+  )
+}
 
 const firebaseConfig = {
   apiKey: "AIzaSyCODVzv3vtC2CYLMNtd03l1KjS-GDjXxas",

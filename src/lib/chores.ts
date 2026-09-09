@@ -3,12 +3,14 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  limit,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   type Unsubscribe,
 } from 'firebase/firestore'
 import { getDb } from './firebase'
@@ -55,13 +57,13 @@ export type ChoresSnapshotMeta = {
   hasPendingWrites: boolean
 }
 
-/** Single live listener - local cache serves reads after first sync. */
+/** Active tasks live listener - excludes archived/completed tasks to minimize read costs. */
 export function subscribeChores(
   uid: string,
   onData: (chores: Chore[], meta: ChoresSnapshotMeta) => void,
   onError?: (error: Error) => void,
 ): Unsubscribe {
-  const q = query(choresCol(uid), orderBy('updatedAt', 'desc'))
+  const q = query(choresCol(uid), where('archivedAt', '==', null))
   return onSnapshot(
     q,
     { includeMetadataChanges: true },
@@ -77,10 +79,45 @@ export function subscribeChores(
             : [],
         } as Chore
       })
+      chores.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
       onData(chores, {
         fromCache: snap.metadata.fromCache,
         hasPendingWrites: snap.metadata.hasPendingWrites,
       })
+    },
+    (err) => onError?.(err),
+  )
+}
+
+/** Paginated completed / archived tasks listener for CompletedPage. */
+export function subscribeCompletedChores(
+  uid: string,
+  limitCount: number,
+  onData: (chores: Chore[], hasMore: boolean) => void,
+  onError?: (error: Error) => void,
+): Unsubscribe {
+  const q = query(
+    choresCol(uid),
+    where('archivedAt', '!=', null),
+    orderBy('archivedAt', 'desc'),
+    limit(limitCount),
+  )
+  return onSnapshot(
+    q,
+    (snap) => {
+      const chores = snap.docs.map((d) => {
+        const data = d.data()
+        return {
+          id: d.id,
+          ...data,
+          repeatEvery: typeof data.repeatEvery === 'number' ? data.repeatEvery : 1,
+          repeatWeekdays: Array.isArray(data.repeatWeekdays)
+            ? data.repeatWeekdays
+            : [],
+        } as Chore
+      })
+      const hasMore = snap.docs.length >= limitCount
+      onData(chores, hasMore)
     },
     (err) => onError?.(err),
   )
@@ -272,7 +309,7 @@ export function completeChore(
     snapshot,
     nextDue,
     promise: updateDoc(doc(choresCol(uid), chore.id), {
-      dueAt: nextDue,
+      dueAt: nextDue ?? chore.dueAt,
       lastCompletedAt: stamp,
       updatedAt: stamp,
       status: 'none',

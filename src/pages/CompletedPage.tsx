@@ -1,26 +1,49 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
-import { format, parseISO } from 'date-fns'
+import { format, parseISO, isBefore, startOfDay } from 'date-fns'
+import { useAuth } from '../hooks/useAuth'
 import { useChores } from '../hooks/useChores'
+import { subscribeCompletedChores } from '../lib/chores'
 import type { Chore } from '../types/models'
 
 type ShellContext = {
   openEdit: (chore: Chore) => void
 }
 
-/** Gone list only - completed / archived one-shots. */
+const PAGE_SIZE_STEP = 25
+
+/** Gone list only - completed / archived one-shots (paginated on-demand). */
 export function CompletedPage() {
-  const { chores, updateTask, deleteTask } = useChores()
+  const { user } = useAuth()
+  const { updateTask, deleteTask, pushToast } = useChores()
   const { openEdit } = useOutletContext<ShellContext>()
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_STEP)
+  const [archived, setArchived] = useState<Chore[]>([])
+  const [hasMore, setHasMore] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
-  const archived = useMemo(
-    () =>
-      chores
-        .filter((c) => c.archivedAt)
-        .sort((a, b) => String(b.archivedAt || '').localeCompare(String(a.archivedAt || ''))),
-    [chores],
-  )
+  useEffect(() => {
+    if (!user) {
+      setArchived([])
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    return subscribeCompletedChores(
+      user.uid,
+      pageSize,
+      (items, more) => {
+        setArchived(items)
+        setHasMore(more)
+        setLoading(false)
+      },
+      (err) => {
+        console.error('Failed to load completed tasks:', err)
+        setLoading(false)
+      },
+    )
+  }, [user, pageSize])
 
   return (
     <div className="space-y-5 pb-8">
@@ -44,78 +67,109 @@ export function CompletedPage() {
         </p>
       </div>
 
-      {archived.length === 0 ? (
+      {loading && archived.length === 0 ? (
+        <div className="rounded-[var(--radius-control)] border border-[var(--hairline)] bg-[var(--surface)] px-5 py-10 text-center">
+          <p className="text-sm text-[var(--muted)]">Loading completed tasks…</p>
+        </div>
+      ) : archived.length === 0 ? (
         <div className="rounded-[var(--radius-control)] border border-dashed border-[var(--hairline)] px-5 py-10 text-center">
           <p className="text-sm text-[var(--muted)]">Nothing archived yet.</p>
         </div>
       ) : (
-        <ul className="divide-y divide-[var(--hairline)] overflow-hidden rounded-[var(--radius-control)] border border-[var(--hairline)] bg-[var(--surface)]">
-          {archived.map((chore) => (
-            <li
-              key={chore.id}
-              className="flex items-center gap-3 px-4 py-3"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[15px] font-medium text-[var(--ink)]">
-                  {chore.title}
-                </p>
-                <div className="flex items-center gap-2 font-mono-meta text-[11px] text-[var(--muted)]">
-                  {chore.archivedAt && (
-                    <span>{format(parseISO(chore.archivedAt), 'MMM d, yyyy · h:mm a')}</span>
-                  )}
-                  {chore.subtasks && chore.subtasks.length > 0 && (
-                    <span>
-                      · {chore.subtasks.filter((s) => s.completed).length}/{chore.subtasks.length} checklist
-                    </span>
-                  )}
+        <>
+          <ul className="divide-y divide-[var(--hairline)] overflow-hidden rounded-[var(--radius-control)] border border-[var(--hairline)] bg-[var(--surface)]">
+            {archived.map((chore) => (
+              <li
+                key={chore.id}
+                className="flex items-center gap-3 px-4 py-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[15px] font-medium text-[var(--ink)]">
+                    {chore.title}
+                  </p>
+                  <div className="flex items-center gap-2 font-mono-meta text-[11px] text-[var(--muted)]">
+                    {chore.archivedAt && (
+                      <span>{format(parseISO(chore.archivedAt), 'MMM d, yyyy · h:mm a')}</span>
+                    )}
+                    {chore.subtasks && chore.subtasks.length > 0 && (
+                      <span>
+                        · {chore.subtasks.filter((s) => s.completed).length}/{chore.subtasks.length} checklist
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <button
-                type="button"
-                className="focus-ring shrink-0 rounded-lg px-2 py-1.5 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)]"
-                onClick={() => updateTask(chore.id, { archivedAt: null })}
-              >
-                Restore
-              </button>
-              <button
-                type="button"
-                className="focus-ring shrink-0 rounded-lg px-2 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)]"
-                onClick={() => openEdit(chore)}
-              >
-                Edit
-              </button>
-              {confirmDeleteId === chore.id ? (
-                <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  className="focus-ring shrink-0 rounded-lg px-2 py-1.5 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)]"
+                  onClick={() => {
+                    const now = new Date()
+                    const isPastOrEmpty = !chore.dueAt || isBefore(parseISO(chore.dueAt), startOfDay(now))
+                    const restoredDueAt = isPastOrEmpty ? now.toISOString() : chore.dueAt
+                    updateTask(
+                      chore.id,
+                      {
+                        archivedAt: null,
+                        dueAt: restoredDueAt,
+                      },
+                      chore,
+                    )
+                    pushToast(`Restored "${chore.title}"`)
+                  }}
+                >
+                  Restore
+                </button>
+                <button
+                  type="button"
+                  className="focus-ring shrink-0 rounded-lg px-2 py-1.5 text-xs text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)]"
+                  onClick={() => openEdit(chore)}
+                >
+                  Edit
+                </button>
+                {confirmDeleteId === chore.id ? (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      className="focus-ring rounded-lg bg-[var(--danger)] px-2 py-1 text-xs font-semibold text-white hover:bg-red-600 transition"
+                      onClick={() => {
+                        deleteTask(chore.id, chore.title, chore.gcalEventId)
+                        setConfirmDeleteId(null)
+                      }}
+                    >
+                      Delete
+                    </button>
+                    <button
+                      type="button"
+                      className="focus-ring rounded-lg px-2 py-1 text-xs text-[var(--muted)] hover:bg-[var(--quiet)]"
+                      onClick={() => setConfirmDeleteId(null)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
                   <button
                     type="button"
-                    className="focus-ring rounded-lg bg-[var(--danger)] px-2 py-1 text-xs font-semibold text-white hover:bg-red-600 transition"
-                    onClick={() => {
-                      deleteTask(chore.id, chore.title)
-                      setConfirmDeleteId(null)
-                    }}
+                    className="focus-ring shrink-0 rounded-lg px-2 py-1.5 text-xs text-[var(--danger)] hover:bg-red-50 transition"
+                    onClick={() => setConfirmDeleteId(chore.id)}
                   >
                     Delete
                   </button>
-                  <button
-                    type="button"
-                    className="focus-ring rounded-lg px-2 py-1 text-xs text-[var(--muted)] hover:bg-[var(--quiet)]"
-                    onClick={() => setConfirmDeleteId(null)}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="focus-ring shrink-0 rounded-lg px-2 py-1.5 text-xs text-[var(--danger)] hover:bg-red-50 transition"
-                  onClick={() => setConfirmDeleteId(chore.id)}
-                >
-                  Delete
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+
+          {hasMore && (
+            <div className="pt-2 text-center">
+              <button
+                type="button"
+                onClick={() => setPageSize((prev) => prev + PAGE_SIZE_STEP)}
+                className="focus-ring inline-flex items-center gap-2 rounded-lg border border-[var(--hairline)] bg-[var(--surface)] px-4 py-2 text-xs font-semibold text-[var(--ink)] shadow-[var(--shadow-card)] hover:bg-[var(--quiet)] transition"
+              >
+                Load older completed tasks (+{PAGE_SIZE_STEP})
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

@@ -98,6 +98,35 @@ export async function ensureZeoTaskCalendar(accessToken: string): Promise<string
 }
 
 /**
+ * Cleans leading completion checkmarks from Google Calendar event summaries.
+ * Prevents titles from accumulating stacked checkmarks (e.g. '✓ ✓ Title').
+ */
+export function cleanGCalTitle(summary?: string | null): string {
+  if (!summary) return 'Untitled Task'
+  return summary.replace(/^[✓✔]\s*/, '').trim() || 'Untitled Task'
+}
+
+/**
+ * Extracts notes/description from Google Calendar event description,
+ * cleanly separating user notes from the auto-generated checklist footer.
+ */
+export function extractGCalDescription(eventDesc?: string | null): string {
+  if (!eventDesc) return ''
+  const checklistIdx = eventDesc.indexOf('\n\nChecklist:\n')
+  if (checklistIdx !== -1) {
+    return eventDesc.substring(0, checklistIdx).trim()
+  }
+  const altChecklistIdx = eventDesc.indexOf('Checklist:\n')
+  if (altChecklistIdx === 0) {
+    return ''
+  }
+  if (altChecklistIdx !== -1) {
+    return eventDesc.substring(0, altChecklistIdx).trim()
+  }
+  return eventDesc.trim()
+}
+
+/**
  * Builds Google Calendar event payload from a ZeoTask Chore.
  */
 function buildGCalEventPayload(chore: Chore) {
@@ -138,8 +167,12 @@ function buildGCalEventPayload(chore: Chore) {
       : `Checklist:\n${checklistText}`
   }
 
-  return {
-    summary: chore.title || 'Untitled Task',
+  const isArchived = Boolean(chore.archivedAt)
+  const baseTitle = cleanGCalTitle(chore.title)
+  const summary = isArchived ? `✓ ${baseTitle}` : baseTitle
+
+  const payload: Record<string, unknown> = {
+    summary,
     description: plainDesc,
     start,
     end,
@@ -149,7 +182,11 @@ function buildGCalEventPayload(chore: Chore) {
         zeoTaskUpdatedAt: chore.updatedAt,
       },
     },
+    // colorId '8' = Graphite/Gray for completed tasks; empty string resets to calendar default
+    colorId: isArchived ? '8' : '',
   }
+
+  return payload
 }
 
 /**
@@ -232,8 +269,15 @@ function buildGCalSubtaskPayload(subtask: Subtask, parentChore: Chore) {
     end = { date: endDateStr }
   }
 
-  return {
-    summary: `↳ ${subtask.title || 'Checklist item'} (${parentChore.title || 'Task'})`,
+  const isCompleted = Boolean(subtask.completed || parentChore.archivedAt)
+  const subTitle = cleanGCalTitle(subtask.title || 'Checklist item')
+  const parTitle = cleanGCalTitle(parentChore.title || 'Task')
+  const summary = isCompleted
+    ? `↳ ✓ ${subTitle} (${parTitle})`
+    : `↳ ${subTitle} (${parTitle})`
+
+  const payload: Record<string, unknown> = {
+    summary,
     description: `Checklist item for: ${parentChore.title}`,
     start,
     end,
@@ -244,7 +288,11 @@ function buildGCalSubtaskPayload(subtask: Subtask, parentChore: Chore) {
         zeoTaskUpdatedAt: parentChore.updatedAt,
       },
     },
+    // colorId '8' = Graphite/Gray for completed subtasks; empty string resets to calendar default
+    colorId: isCompleted ? '8' : '',
   }
+
+  return payload
 }
 
 /**

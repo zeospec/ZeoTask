@@ -29,6 +29,7 @@ import {
   parseISO
 } from 'date-fns'
 import type { Chore, Label } from '../types/models'
+import { byDue } from '../lib/scheduler'
 import { useProjects } from '../hooks/useProjects'
 import { ChoreRow } from './ChoreRow'
 import { ChevronLeft, ChevronRight, Plus } from './icons'
@@ -199,7 +200,8 @@ export function CalendarView({
 
   const selectedTasks = useMemo(() => {
     const key = format(selectedDate, 'yyyy-MM-dd')
-    return choresByDay.get(key) || []
+    const list = choresByDay.get(key) || []
+    return [...list].sort(byDue)
   }, [choresByDay, selectedDate])
 
   const unscheduledTasks = useMemo(() => {
@@ -233,11 +235,18 @@ export function CalendarView({
       const chore = chores.find(c => c.id === choreId)
       if (!chore) return
       
-      const newDue = parseISO(targetDate)
-      // We set the time to 12:00 PM as a safe default for a dragged task
-      newDue.setHours(12, 0, 0, 0)
-      
-      onUpdateTask(choreId, { dueAt: newDue.toISOString() })
+      if (chore.isAllDay) {
+        onUpdateTask(choreId, { dueAt: targetDate, isAllDay: true })
+      } else if (chore.dueAt) {
+        const oldDue = parseISO(chore.dueAt)
+        const newDue = parseISO(targetDate)
+        newDue.setHours(oldDue.getHours(), oldDue.getMinutes(), oldDue.getSeconds(), 0)
+        onUpdateTask(choreId, { dueAt: newDue.toISOString(), isAllDay: false })
+      } else {
+        const newDue = parseISO(targetDate)
+        newDue.setHours(12, 0, 0, 0)
+        onUpdateTask(choreId, { dueAt: newDue.toISOString() })
+      }
       setSelectedDate(parseISO(targetDate))
       setActiveTab('scheduled')
     }

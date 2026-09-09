@@ -13,6 +13,7 @@ export type TextHighlight = {
 export type SmartParseResult = {
   cleanedTitle: string
   dueAt: Date | null
+  isAllDay: boolean
   frequency: Frequency
   priority: Priority
   labelNames: string[]
@@ -32,6 +33,7 @@ type RawMatch = {
 
 type MutableParse = {
   dueAt: Date | null
+  isAllDay: boolean
   frequency: Frequency
   priority: Priority
   labelNames: string[]
@@ -260,10 +262,11 @@ function collectDue(input: string): RawMatch[] {
   const dueDateStartIndex = dueDateMatch.index
   const dueDateEndIndex = dueDateStartIndex + text.length
 
+  const isAllDay = !dueDateMatch.start.isCertain('hour')
   let resultDate = dueDateMatch.start.date()
-  if (!dueDateMatch.start.isCertain('hour')) {
+  if (isAllDay) {
     resultDate = new Date(resultDate)
-    resultDate.setHours(23, 59, 59, 0)
+    resultDate.setHours(0, 0, 0, 0)
   }
 
   return [
@@ -275,6 +278,7 @@ function collectDue(input: string): RawMatch[] {
       priority: 20,
       apply: (acc) => {
         acc.dueAt = resultDate
+        acc.isAllDay = isAllDay
       },
     },
   ]
@@ -304,6 +308,7 @@ export function parseSmartTitle(input: string, ignoredTokens: string[] = []): Sm
   const empty: SmartParseResult = {
     cleanedTitle: input.trim(),
     dueAt: null,
+    isAllDay: false,
     frequency: 'once',
     priority: 0,
     labelNames: [],
@@ -324,6 +329,7 @@ export function parseSmartTitle(input: string, ignoredTokens: string[] = []): Sm
 
   const acc: MutableParse = {
     dueAt: null,
+    isAllDay: false,
     frequency: 'once',
     priority: 0,
     labelNames: [],
@@ -338,6 +344,7 @@ export function parseSmartTitle(input: string, ignoredTokens: string[] = []): Sm
       chosen.map((m) => ({ start: m.start, end: m.end })),
     ) || input.trim(),
     dueAt: acc.dueAt,
+    isAllDay: acc.isAllDay,
     frequency: acc.frequency,
     priority: acc.priority,
     labelNames: acc.labelNames,
@@ -355,6 +362,7 @@ export function parseSmartTitle(input: string, ignoredTokens: string[] = []): Sm
 export type SubtaskParseResult = {
   cleanedTitle: string
   dueAt: Date | null
+  isAllDay: boolean
   dueText?: string
   highlights: TextHighlight[]
 }
@@ -363,15 +371,16 @@ export type SubtaskParseResult = {
 export function parseSubtaskTitle(input: string): SubtaskParseResult {
   const trimmed = input.trim()
   if (!trimmed) {
-    return { cleanedTitle: '', dueAt: null, highlights: [] }
+    return { cleanedTitle: '', dueAt: null, isAllDay: false, highlights: [] }
   }
   const dueMatches = collectDue(trimmed)
   if (dueMatches.length === 0) {
-    return { cleanedTitle: trimmed, dueAt: null, highlights: [] }
+    return { cleanedTitle: trimmed, dueAt: null, isAllDay: false, highlights: [] }
   }
   const match = dueMatches[0]
   const acc: MutableParse = {
     dueAt: null,
+    isAllDay: false,
     frequency: 'once',
     priority: 0,
     labelNames: [],
@@ -383,6 +392,7 @@ export function parseSubtaskTitle(input: string): SubtaskParseResult {
   return {
     cleanedTitle: cleanedTitle || trimmed,
     dueAt: acc.dueAt,
+    isAllDay: acc.isAllDay,
     dueText: match.text,
     highlights: [
       {

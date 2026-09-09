@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore'
 import { getMessaging, isSupported, type Messaging } from 'firebase/messaging'
 import { getStorage } from 'firebase/storage'
+import { getFunctions, type Functions } from 'firebase/functions'
 
 export const firebaseConfig = {
   apiKey: "AIzaSyCODVzv3vtC2CYLMNtd03l1KjS-GDjXxas",
@@ -97,5 +98,15 @@ export function getFirebaseStorage() {
   return getStorage(getFirebaseApp())
 }
 
+let functionsInstance: Functions | undefined
+
+export function getFirebaseFunctions(): Functions {
+  if (!functionsInstance) {
+    functionsInstance = getFunctions(getFirebaseApp(), 'us-central1')
+  }
+  return functionsInstance
+}
+
 export const googleProvider = new GoogleAuthProvider()
 googleProvider.setCustomParameters({ prompt: 'select_account' })
+

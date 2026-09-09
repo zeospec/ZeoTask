@@ -19,7 +19,8 @@ import {
 
 type Props = {
   value: Date | null
-  onApply: (date: Date | null) => void
+  isAllDay?: boolean
+  onApply: (date: Date | null, isAllDay?: boolean) => void
   onClose: () => void
 }
 
@@ -41,28 +42,31 @@ function chipClass(active: boolean) {
   return [
     'rounded-full border px-3 py-1.5 text-sm transition',
     active
-      ? 'border-[var(--accent)]/40 bg-[var(--accent-wash)] font-medium text-[var(--ink)]'
+      ? 'border-[var(--accent)]/40 bg-[var(--accent-wash)] font-medium text-[var(--accent)] ring-1 ring-[var(--accent)]/30'
       : 'border-transparent bg-[var(--quiet)] text-[var(--ink)] hover:bg-[var(--accent-wash)]',
   ].join(' ')
 }
 
-export function DueDatePicker({ value, onApply, onClose }: Props) {
+export function DueDatePicker({ value, isAllDay, onApply, onClose }: Props) {
   const [cursor, setCursor] = useState(() => startOfMonth(value ?? new Date()))
   const [selected, setSelected] = useState<Date | null>(value)
-  const [timeHour, setTimeHour] = useState(() => (value ? value.getHours() : 23))
+  const [allDay, setAllDay] = useState<boolean>(() => isAllDay ?? (value ? false : true))
+  const [timeHour, setTimeHour] = useState(() => (value && !isAllDay ? value.getHours() : 9))
   const [timeMinute, setTimeMinute] = useState(() =>
-    value ? value.getMinutes() : 59,
+    value && !isAllDay ? value.getMinutes() : 0,
   )
 
   const days = useMemo(() => buildCalendar(cursor), [cursor])
 
   function pickDate(day: Date) {
-    const withTime = setMinutes(setHours(startOfDay(day), timeHour), timeMinute)
+    const base = startOfDay(day)
+    const withTime = allDay ? base : setMinutes(setHours(base, timeHour), timeMinute)
     setSelected(withTime)
   }
 
   function applyQuickDate(day: Date) {
-    const withTime = setMinutes(setHours(startOfDay(day), timeHour), timeMinute)
+    const base = startOfDay(day)
+    const withTime = allDay ? base : setMinutes(setHours(base, timeHour), timeMinute)
     setSelected(withTime)
     setCursor(startOfMonth(day))
   }
@@ -70,11 +74,9 @@ export function DueDatePicker({ value, onApply, onClose }: Props) {
   function applyQuickTime(hour: number, minute: number) {
     setTimeHour(hour)
     setTimeMinute(minute)
-    if (selected) {
-      setSelected(setMinutes(setHours(selected, hour), minute))
-    } else {
-      setSelected(setMinutes(setHours(startOfDay(new Date()), hour), minute))
-    }
+    setAllDay(false)
+    const base = selected ? startOfDay(selected) : startOfDay(new Date())
+    setSelected(setMinutes(setHours(base, hour), minute))
   }
 
   const today = startOfDay(new Date())
@@ -89,14 +91,16 @@ export function DueDatePicker({ value, onApply, onClose }: Props) {
   const nextWeek = addWeeks(today, 1)
   const nextMonth = addMonths(today, 1)
 
-  const quickTimeLabel = selected
+  const quickTimeLabel = !allDay && selected
     ? matchingQuickTimeLabel(selected.getHours(), selected.getMinutes())
-    : matchingQuickTimeLabel(timeHour, timeMinute)
+    : null
 
   const summary = selected
-    ? `${format(selected, 'EEE, MMM d · h:mm a')}${
-        quickTimeLabel ? ` (${quickTimeLabel})` : ''
-      }`
+    ? allDay
+      ? `${format(selected, 'EEE, MMM d')} · All-Day`
+      : `${format(selected, 'EEE, MMM d · h:mm a')}${
+          quickTimeLabel ? ` (${quickTimeLabel})` : ''
+        }`
     : 'No date selected'
 
   const modalContent = (
@@ -155,14 +159,29 @@ export function DueDatePicker({ value, onApply, onClose }: Props) {
         </div>
 
         <p className="mb-2 text-[11px] font-semibold tracking-[0.14em] text-[var(--muted)] uppercase">
-          Quick time
+          Time
         </p>
         <div className="mb-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setAllDay(true)
+              if (selected) {
+                setSelected(startOfDay(selected))
+              }
+            }}
+            className={chipClass(allDay)}
+          >
+            All-Day
+          </button>
           {quickTimes.map((q) => {
             const active =
-              (selected
-                ? selected.getHours() === q.hour && selected.getMinutes() === q.minute
-                : timeHour === q.hour && timeMinute === q.minute)
+              !allDay &&
+              Boolean(
+                selected
+                  ? selected.getHours() === q.hour && selected.getMinutes() === q.minute
+                  : timeHour === q.hour && timeMinute === q.minute,
+              )
             return (
               <button
                 key={q.label}
@@ -234,7 +253,7 @@ export function DueDatePicker({ value, onApply, onClose }: Props) {
             className="rounded-[10px] px-3 py-2 text-sm text-[var(--muted)] hover:bg-[var(--quiet)]"
             onClick={() => {
               setSelected(null)
-              onApply(null)
+              onApply(null, false)
             }}
           >
             Clear
@@ -249,7 +268,7 @@ export function DueDatePicker({ value, onApply, onClose }: Props) {
             </button>
             <button
               type="button"
-              onClick={() => onApply(selected)}
+              onClick={() => onApply(selected, allDay)}
               className="rounded-[10px] bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
             >
               Apply

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { format, parseISO } from 'date-fns'
 import { Search } from './icons'
 import { useChores } from '../hooks/useChores'
 import { useLabels } from '../hooks/useLabels'
+import { formatDueDisplay } from '../lib/scheduler'
 import type { Chore } from '../types/models'
 
 type Props = {
@@ -116,9 +116,7 @@ export function SearchOverlay({ open, onClose, onSelect }: Props) {
                       </span>
                     )}
                   <span className="font-mono-meta text-[11px] text-[var(--muted)]">
-                    {chore.dueAt
-                      ? format(parseISO(chore.dueAt), 'MMM d · h:mm a')
-                      : 'No due date'}
+                    {formatDueDisplay(chore) || 'No due date'}
                   </span>
                 </button>
               </li>

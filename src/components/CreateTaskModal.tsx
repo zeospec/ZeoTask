@@ -11,6 +11,7 @@ import { useProjects } from '../hooks/useProjects'
 import { ensureLabelIds } from '../lib/labels'
 import {
   formatPreviewDue,
+  parseChoreDue,
   previewNextDue,
   recurrenceSummary,
 } from '../lib/scheduler'
@@ -71,6 +72,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
   const [parsed, setParsed] = useState<SmartParseResult>(() => parseSmartTitle(initialTitle || ''))
   const [ignoredTokens, setIgnoredTokens] = useState<{text: string; kind: string}[]>(initialOverrides?.ignoredTokens || [])
   const [dueOverride, setDueOverride] = useState<Date | null | undefined>(undefined)
+  const [isAllDayOverride, setIsAllDayOverride] = useState<boolean | undefined>(undefined)
   const [freqOverride, setFreqOverride] = useState<Frequency | undefined>(undefined)
   const [prioOverride, setPrioOverride] = useState<Priority | undefined>(undefined)
   const [repeatEvery, setRepeatEvery] = useState(1)
@@ -112,6 +114,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
     setIgnoredTokens(initialOverrides?.ignoredTokens || [])
     setParsed(parseSmartTitle(initialTitle || '', (initialOverrides?.ignoredTokens || []).map(t => t.text)))
     setDueOverride(undefined)
+    setIsAllDayOverride(undefined)
     setFreqOverride(undefined)
     setPrioOverride(undefined)
     const initialLabels = [...(initialOverrides?.manualLabels || [])]
@@ -154,6 +157,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
       setIgnoredTokens([])
       setParsed(() => parseSmartTitle(editing.title, []))
       setDueOverride(undefined)
+      setIsAllDayOverride(editing.isAllDay)
       setFreqOverride(undefined)
       setPrioOverride(undefined)
       setProjectOverride(undefined)
@@ -260,8 +264,17 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
       : hasNlpDue
         ? parsed.dueAt
         : editing
-          ? (editing.dueAt ? new Date(editing.dueAt) : null)
+          ? parseChoreDue(editing.dueAt)
           : parsed.dueAt
+
+  const isAllDay =
+    isAllDayOverride !== undefined
+      ? isAllDayOverride
+      : hasNlpDue
+        ? parsed.isAllDay
+        : editing
+          ? Boolean(editing.isAllDay)
+          : parsed.isAllDay
 
   const hasNlpPriority = parsed.highlights.some((h) => h.kind === 'priority')
   const priority =
@@ -394,13 +407,20 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
       return
     }
 
+    const finalDueAt = dueAt
+      ? isAllDay
+        ? format(dueAt, 'yyyy-MM-dd')
+        : dueAt.toISOString()
+      : null
+
     const payload = {
       title,
       description,
       frequency: freq,
       isRolling: editing ? editing.isRolling : true,
       priority,
-      dueAt: dueAt?.toISOString() ?? null,
+      dueAt: finalDueAt,
+      isAllDay,
       labelIds,
       projectId: finalProjectId,
       subtasks,
@@ -663,7 +683,9 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
                 <div className="mt-2.5 flex flex-wrap gap-1.5">
                   {dueAt && (
                     <span className="group flex items-center gap-1 rounded-full bg-[var(--accent-wash)] pl-2.5 pr-1.5 py-1 font-mono-meta text-[11px] text-[var(--accent)]">
-                      {format(dueAt, 'EEE, MMM d · h:mm a')}
+                      {isAllDay
+                        ? format(dueAt, 'EEE, MMM d')
+                        : format(dueAt, 'EEE, MMM d · h:mm a')}
                       <button
                         type="button"
                         aria-label="Remove due date"
@@ -776,7 +798,11 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
                     setProjectsOpen(false)
                   }}
                 >
-                  {dueAt ? format(dueAt, 'MMM d · h:mm a') : 'Due'}
+                  {dueAt
+                    ? isAllDay
+                      ? format(dueAt, 'MMM d')
+                      : format(dueAt, 'MMM d · h:mm a')
+                    : 'Due'}
                 </Pill>
               </div>
               <div className="relative">
@@ -1360,9 +1386,11 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
       {dueOpen && (
         <DueDatePicker
           value={dueAt}
+          isAllDay={isAllDay}
           onClose={() => setDueOpen(false)}
-          onApply={(date) => {
+          onApply={(date, allDay) => {
             setDueOverride(date)
+            setIsAllDayOverride(allDay)
             setDueOpen(false)
           }}
         />

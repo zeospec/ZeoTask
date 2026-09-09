@@ -1,7 +1,11 @@
 import { memo } from 'react'
-import { format, parseISO } from 'date-fns'
 import type { Chore, Label } from '../types/models'
-import { priorityLabel, recurrenceSummary } from '../lib/scheduler'
+import {
+  formatDueDisplay,
+  isChoreOverdue,
+  priorityLabel,
+  recurrenceSummary,
+} from '../lib/scheduler'
 import { Check } from './icons'
 
 type Props = {
@@ -28,10 +32,7 @@ export const ChoreRow = memo(function ChoreRow({
 }: Props) {
   const shown = labels.slice(0, 2)
   const extra = labels.length - shown.length
-  const overdue =
-    Boolean(chore.dueAt) &&
-    new Date(chore.dueAt!) < new Date() &&
-    !chore.archivedAt
+  const overdue = isChoreOverdue(chore)
 
   return (
     <article
@@ -69,7 +70,7 @@ export const ChoreRow = memo(function ChoreRow({
                 overdue ? 'text-[var(--danger)]' : 'text-[var(--muted)]',
               ].join(' ')}
             >
-              {format(parseISO(chore.dueAt), 'EEE · h:mm a')}
+              {formatDueDisplay(chore)}
             </span>
           )}
           {shown.map((l) => (

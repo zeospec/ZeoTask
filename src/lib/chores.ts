@@ -36,6 +36,7 @@ export type ChoreInput = {
   description?: string
   priority?: Priority
   dueAt?: string | null
+  isAllDay?: boolean
   isRolling?: boolean
   frequency?: Frequency
   repeatEvery?: number
@@ -45,6 +46,8 @@ export type ChoreInput = {
   reminderEnabled?: boolean
   predueHours?: number
   projectId?: string | null
+  gcalEventId?: string | null
+  gcalLastSyncedAt?: string | null
 }
 
 export type ChoresSnapshotMeta = {
@@ -128,6 +131,7 @@ function buildPayload(input: ChoreInput, stamp: string): Omit<Chore, 'id'> {
   const reminderEnabled = input.reminderEnabled ?? true
   const predueHours = input.predueHours ?? 24
   const dueAt = input.dueAt ?? null
+  const isAllDay = input.isAllDay ?? Boolean(dueAt && !dueAt.includes('T'))
   const nextReminderAt = computeNextReminderAt({
     dueAt,
     reminderEnabled,
@@ -141,6 +145,7 @@ function buildPayload(input: ChoreInput, stamp: string): Omit<Chore, 'id'> {
     priority: input.priority ?? 0,
     status: 'none',
     dueAt,
+    isAllDay,
     isRolling: input.isRolling ?? true,
     frequency: input.frequency ?? 'once',
     repeatEvery: input.repeatEvery ?? 1,
@@ -154,6 +159,8 @@ function buildPayload(input: ChoreInput, stamp: string): Omit<Chore, 'id'> {
     lastDuePushAt: null,
     lastPreduePushAt: null,
     lastOverduePushAt: null,
+    gcalEventId: input.gcalEventId ?? null,
+    gcalLastSyncedAt: input.gcalLastSyncedAt ?? null,
     archivedAt: null,
     createdAt: stamp,
     updatedAt: stamp,
@@ -186,6 +193,9 @@ export function updateChore(
     lastPreduePushAt?: string | null
     lastOverduePushAt?: string | null
     nextReminderAt?: string | null
+    isAllDay?: boolean
+    gcalEventId?: string | null
+    gcalLastSyncedAt?: string | null
   },
   existingChore?: Chore,
 ): Promise<void> {
@@ -196,7 +206,13 @@ export function updateChore(
 
   // If dueAt, reminderEnabled, or predueHours changed, recompute nextReminderAt
   if (existingChore) {
-    if ('dueAt' in patch || 'reminderEnabled' in patch || 'predueHours' in patch || 'archivedAt' in patch) {
+    if (
+      'dueAt' in patch ||
+      'reminderEnabled' in patch ||
+      'predueHours' in patch ||
+      'archivedAt' in patch ||
+      'isAllDay' in patch
+    ) {
       const merged = { ...existingChore, ...patch }
       if ('dueAt' in patch && patch.dueAt !== existingChore.dueAt) {
         merged.lastDuePushAt = null
@@ -235,6 +251,7 @@ export function completeChore(
   )
   const snapshot: ChoreCompleteSnapshot = {
     dueAt: chore.dueAt,
+    isAllDay: chore.isAllDay,
     archivedAt: chore.archivedAt,
     subtasks: chore.subtasks,
     lastCompletedAt: chore.lastCompletedAt,

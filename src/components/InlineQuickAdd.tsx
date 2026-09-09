@@ -58,6 +58,7 @@ export function InlineQuickAdd({ activeProjectId, activeLabelId, onExpand }: Pro
       title: parsed.cleanedTitle || 'Untitled',
       description: '',
       dueAt: finalDue ? finalDue.toISOString() : null,
+      isAllDay: parsed.isAllDay,
       frequency: finalFreq || 'once',
       repeatEvery: 1,
       repeatWeekdays: [],
@@ -87,11 +88,17 @@ export function InlineQuickAdd({ activeProjectId, activeLabelId, onExpand }: Pro
         <div className="mb-2 flex flex-wrap gap-1.5 px-4">
           {finalDue && (
             <span className="flex items-center gap-1 rounded-full bg-[var(--accent-wash)] px-2.5 py-0.5 font-mono-meta text-[11px] font-medium text-[var(--accent)]">
-              {isToday(finalDue)
-                ? `Today · ${format(finalDue, 'h:mm a')}`
-                : isTomorrow(finalDue)
-                  ? `Tomorrow · ${format(finalDue, 'h:mm a')}`
-                  : format(finalDue, 'MMM d · h:mm a')}
+              {parsed.isAllDay
+                ? isToday(finalDue)
+                  ? 'Today'
+                  : isTomorrow(finalDue)
+                    ? 'Tomorrow'
+                    : format(finalDue, 'MMM d')
+                : isToday(finalDue)
+                  ? `Today · ${format(finalDue, 'h:mm a')}`
+                  : isTomorrow(finalDue)
+                    ? `Tomorrow · ${format(finalDue, 'h:mm a')}`
+                    : format(finalDue, 'MMM d · h:mm a')}
               <button
                 type="button"
                 className="ml-0.5 rounded-full hover:bg-[var(--accent)]/10"

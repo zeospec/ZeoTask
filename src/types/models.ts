@@ -16,6 +16,7 @@ export interface Subtask {
   completed: boolean
   parentId?: string | null
   dueAt?: string | null
+  isAllDay?: boolean
 }
 
 export interface Chore {
@@ -25,6 +26,7 @@ export interface Chore {
   priority: Priority
   status: ChoreStatus
   dueAt: string | null
+  isAllDay?: boolean
   isRolling: boolean
   frequency: Frequency
   /** Every N periods (default 1). */
@@ -40,6 +42,8 @@ export interface Chore {
   lastDuePushAt?: string | null
   lastPreduePushAt?: string | null
   lastOverduePushAt?: string | null
+  gcalEventId?: string | null
+  gcalLastSyncedAt?: string | null
   archivedAt: string | null
   createdAt: string
   updatedAt: string
@@ -90,8 +94,29 @@ export interface NotificationSettings {
 /** Snapshot used to undo a complete. */
 export type ChoreCompleteSnapshot = Pick<
   Chore,
-  'dueAt' | 'archivedAt' | 'subtasks' | 'lastCompletedAt' | 'updatedAt' | 'status'
+  'dueAt' | 'isAllDay' | 'archivedAt' | 'subtasks' | 'lastCompletedAt' | 'updatedAt' | 'status'
 >
+
+export interface GCalSyncSettings {
+  enabled: boolean
+  calendarId?: string
+  calendarName?: string
+  twoWaySync: boolean
+  syncCompleted: boolean
+  lastSyncAt?: string
+}
+
+export interface GCalIntegrationDoc {
+  enabled: boolean
+  calendarId: string
+  calendarName?: string
+  accessToken?: string
+  refreshToken?: string
+  expiresAt?: number
+  syncToken?: string | null
+  lastSyncedAt?: string | null
+  tombstones?: string[]
+}
 
 export interface CustomView {
   id: string

@@ -150,6 +150,61 @@ export function recurrenceSummary(
   }
 }
 
+export function parseChoreDue(dueAt: string | null | undefined): Date | null {
+  if (!dueAt) return null
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dueAt)) {
+    const [y, m, d] = dueAt.split('-').map(Number)
+    return new Date(y, m - 1, d)
+  }
+  const parsed = parseISO(dueAt)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+export function isChoreOverdue(
+  chore: { dueAt?: string | null; isAllDay?: boolean; archivedAt?: string | null },
+  now = new Date(),
+): boolean {
+  if (!chore.dueAt || chore.archivedAt) return false
+  const due = parseChoreDue(chore.dueAt)
+  if (!due) return false
+  if (chore.isAllDay) {
+    return isBefore(endOfDay(due), now)
+  }
+  return isBefore(due, now)
+}
+
+export function formatDueDisplay(
+  chore: { dueAt?: string | null; isAllDay?: boolean },
+  now = new Date(),
+): string | null {
+  if (!chore.dueAt) return null
+  const due = parseChoreDue(chore.dueAt)
+  if (!due) return null
+
+  const isTodayDate = isSameDay(due, now)
+  const isTomorrowDate = isSameDay(due, addDays(now, 1))
+  const isYesterdayDate = isSameDay(due, addDays(now, -1))
+
+  if (chore.isAllDay) {
+    if (isTodayDate) return 'Today'
+    if (isTomorrowDate) return 'Tomorrow'
+    if (isYesterdayDate) return 'Yesterday'
+    if (due.getFullYear() === now.getFullYear()) {
+      return format(due, 'EEE, MMM d')
+    }
+    return format(due, 'MMM d, yyyy')
+  }
+
+  const timeStr = format(due, 'h:mm a')
+  if (isTodayDate) return `Today · ${timeStr}`
+  if (isTomorrowDate) return `Tomorrow · ${timeStr}`
+  if (isYesterdayDate) return `Yesterday · ${timeStr}`
+  if (due.getFullYear() === now.getFullYear()) {
+    return format(due, 'EEE, MMM d · h:mm a')
+  }
+  return format(due, 'MMM d, yyyy · h:mm a')
+}
+
 export function formatPreviewDue(date: Date | null): string | null {
   if (!date) return null
   return `Next: ${format(date, 'EEE, MMM d · h:mm a')}`
@@ -157,7 +212,9 @@ export function formatPreviewDue(date: Date | null): string | null {
 
 export function bucketForChore(chore: Chore, now = new Date()): ChoreBucket {
   if (!chore.dueAt) return 'anytime'
-  const due = parseISO(chore.dueAt)
+  const due = parseChoreDue(chore.dueAt)
+  if (!due) return 'anytime'
+
   const todayStart = startOfDay(now)
   const todayEnd = endOfDay(now)
   const tomorrow = startOfTomorrow()

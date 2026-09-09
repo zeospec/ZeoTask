@@ -1,11 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.reminderTick = void 0;
+exports.gcalWebhook = exports.gcalRefreshToken = exports.gcalTriggerSync = exports.gcalExchangeCode = exports.reminderTick = void 0;
 const app_1 = require("firebase-admin/app");
 const firestore_1 = require("firebase-admin/firestore");
 const messaging_1 = require("firebase-admin/messaging");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
+const https_1 = require("firebase-functions/v2/https");
 const firebase_functions_1 = require("firebase-functions");
+const gcal_1 = require("./gcal");
 (0, app_1.initializeApp)();
 function localParts(date, timeZone) {
     const fmt = new Intl.DateTimeFormat('en-US', {
@@ -114,6 +116,19 @@ exports.reminderTick = (0, scheduler_1.onSchedule)({
     for (const userDoc of users.docs) {
         const uid = userDoc.id;
         const userData = userDoc.data();
+        // 0. Google Calendar Background Sync & Proactive Auto-Refresh (Runs 24/7/365 regardless of push settings)
+        try {
+            const gcalSnap = await db.doc(`users/${uid}/integrations/googleCalendar`).get();
+            if (gcalSnap.exists) {
+                const gcalData = gcalSnap.data();
+                if (gcalData && gcalData.enabled) {
+                    await (0, gcal_1.syncGCalForUser)(db, uid, gcalData, process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
+                }
+            }
+        }
+        catch (gcalErr) {
+            firebase_functions_1.logger.warn('Error during background gcal sync in reminderTick', { uid, err: gcalErr });
+        }
         const settings = (userData.notificationSettings || {});
         const timeZone = settings.timezone ||
             userData.timezone ||
@@ -286,5 +301,121 @@ exports.reminderTick = (0, scheduler_1.onSchedule)({
             await choreDoc.ref.update(updates);
         }
     }
+});
+/**
+ * Callable Function: Exchanges Google OAuth authorization code for permanent refresh_token
+ * and sets up secondary "ZeoTask" calendar.
+ */
+exports.gcalExchangeCode = (0, https_1.onCall)(async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError('unauthenticated', 'User must be authenticated');
+    }
+    const uid = request.auth.uid;
+    const code = request.data?.code;
+    const redirectUri = request.data?.redirectUri || 'postmessage';
+    if (!code) {
+        throw new https_1.HttpsError('invalid-argument', 'Missing OAuth authorization code');
+    }
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+        throw new https_1.HttpsError('failed-precondition', 'Google OAuth credentials (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) are not configured in Cloud Functions.');
+    }
+    const db = (0, firestore_1.getFirestore)();
+    try {
+        const { accessToken, refreshToken, expiresIn } = await (0, gcal_1.exchangeOAuthCode)(clientId, clientSecret, code, redirectUri);
+        const calendarId = await (0, gcal_1.ensureBackendZeoTaskCalendar)(accessToken);
+        const now = Date.now();
+        const docData = {
+            enabled: true,
+            calendarId,
+            calendarName: 'ZeoTask',
+            accessToken,
+            refreshToken: refreshToken || undefined,
+            expiresAt: now + expiresIn * 1000,
+            syncToken: null,
+            tombstones: [],
+            lastSyncedAt: new Date().toISOString(),
+        };
+        await db.doc(`users/${uid}/integrations/googleCalendar`).set(docData, { merge: true });
+        // Trigger initial background sync
+        await (0, gcal_1.syncGCalForUser)(db, uid, docData, clientId, clientSecret);
+        return {
+            success: true,
+            calendarId,
+            calendarName: 'ZeoTask',
+            expiresAt: docData.expiresAt,
+        };
+    }
+    catch (err) {
+        firebase_functions_1.logger.error('Failed to exchange code:', err);
+        throw new https_1.HttpsError('internal', err.message || 'Failed to exchange authorization code');
+    }
+});
+/**
+ * Callable Function: Manually or programmatically triggers a Google Calendar sync pass.
+ */
+exports.gcalTriggerSync = (0, https_1.onCall)(async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError('unauthenticated', 'User must be authenticated');
+    }
+    const uid = request.auth.uid;
+    const db = (0, firestore_1.getFirestore)();
+    const gcalSnap = await db.doc(`users/${uid}/integrations/googleCalendar`).get();
+    if (!gcalSnap.exists) {
+        throw new https_1.HttpsError('not-found', 'Integration not found');
+    }
+    const gcalData = gcalSnap.data();
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    await (0, gcal_1.syncGCalForUser)(db, uid, gcalData, clientId, clientSecret);
+    return { success: true };
+});
+/**
+ * Callable Function: Obtains or refreshes access token for the client.
+ */
+exports.gcalRefreshToken = (0, https_1.onCall)(async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError('unauthenticated', 'User must be authenticated');
+    }
+    const uid = request.auth.uid;
+    const db = (0, firestore_1.getFirestore)();
+    const gcalSnap = await db.doc(`users/${uid}/integrations/googleCalendar`).get();
+    if (!gcalSnap.exists) {
+        throw new https_1.HttpsError('not-found', 'Integration not found');
+    }
+    const gcalData = gcalSnap.data();
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const token = await (0, gcal_1.getValidBackendToken)(db, uid, gcalData, clientId, clientSecret);
+    if (!token) {
+        throw new https_1.HttpsError('internal', 'Could not refresh token');
+    }
+    return { accessToken: token };
+});
+/**
+ * HTTP Webhook: Receives Google Calendar push notifications (watch channel updates)
+ * and triggers immediate sub-second synchronization.
+ */
+exports.gcalWebhook = (0, https_1.onRequest)(async (req, res) => {
+    const channelId = req.headers['x-goog-channel-id'];
+    const resourceState = req.headers['x-goog-resource-state'];
+    const channelToken = req.headers['x-goog-channel-token'];
+    if (!channelId || resourceState === 'sync') {
+        res.status(200).send('OK');
+        return;
+    }
+    const uid = channelToken || req.query.uid;
+    if (uid) {
+        const db = (0, firestore_1.getFirestore)();
+        const gcalSnap = await db.doc(`users/${uid}/integrations/googleCalendar`).get();
+        if (gcalSnap.exists) {
+            const gcalData = gcalSnap.data();
+            if (gcalData.enabled) {
+                await (0, gcal_1.syncGCalForUser)(db, uid, gcalData, process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET).catch((err) => firebase_functions_1.logger.error('Webhook sync failed for user', { uid, err }));
+            }
+        }
+    }
+    res.status(200).send('OK');
 });
 //# sourceMappingURL=index.js.map

@@ -1,12 +1,22 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
+import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth'
 import { useAuth } from '../hooks/useAuth'
+import { useChores } from '../hooks/useChores'
 import { usePwa } from '../hooks/usePwa'
+import { CalendarIcon } from '../components/icons'
 import {
   getNotificationSettings,
   saveNotificationSettings,
 } from '../lib/chores'
-import { isFirebaseConfigured, getVapidKey } from '../lib/firebase'
+import { isFirebaseConfigured, getFirebaseAuth, getFirebaseFunctions, getVapidKey } from '../lib/firebase'
+import { httpsCallable } from 'firebase/functions'
+import { ensureZeoTaskCalendar } from '../lib/gcal'
+import {
+  getGCalIntegration,
+  saveGCalIntegration,
+  getSyncCoordinator,
+} from '../lib/syncCoordinator'
 import {
   disablePushNotifications,
   enablePushNotifications,
@@ -17,10 +27,11 @@ import {
   defaultNotificationSettings,
   formatDigestTime,
 } from '../lib/userSettings'
-import type { NotificationSettings } from '../types/models'
+import type { GCalIntegrationDoc, NotificationSettings } from '../types/models'
 
 export function ProfilePage() {
   const { user, logout, updateDisplayName } = useAuth()
+  const { chores } = useChores()
   const { needRefresh, updateServiceWorker, installPrompt, promptInstall } = usePwa()
   const [nameDraft, setNameDraft] = useState(user?.displayName ?? '')
   const [editingName, setEditingName] = useState(false)
@@ -32,11 +43,140 @@ export function ProfilePage() {
   const [notifBusy, setNotifBusy] = useState(false)
   const [notifMsg, setNotifMsg] = useState<string | null>(null)
   const [pushPerm, setPushPerm] = useState(notificationPermission())
+  const [gcalDoc, setGcalDoc] = useState<GCalIntegrationDoc | null>(null)
+  const [gcalBusy, setGcalBusy] = useState(false)
+  const [gcalMsg, setGcalMsg] = useState<string | null>(null)
 
   useEffect(() => {
     if (!user) return
     void getNotificationSettings(user.uid).then(setNotif)
+    void getGCalIntegration(user.uid).then(setGcalDoc)
   }, [user])
+
+  async function onConnectGCal() {
+    if (!user) return
+    setGcalBusy(true)
+    setGcalMsg(null)
+    try {
+      // 1. Preferred: Google Identity Services (GIS) initCodeClient for permanent refresh token
+      const googleOAuth = (window as unknown as { google?: { accounts?: { oauth2?: any } } })
+        .google?.accounts?.oauth2
+      const clientId =
+        (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) ||
+        '395410156315.apps.googleusercontent.com'
+
+      if (googleOAuth && clientId) {
+        try {
+          const authCode = await new Promise<string>((resolve, reject) => {
+            const client = googleOAuth.initCodeClient({
+              client_id: clientId,
+              scope: 'https://www.googleapis.com/auth/calendar',
+              ux_mode: 'popup',
+              callback: (response: { code?: string; error?: string }) => {
+                if (response.error) reject(new Error(response.error))
+                else if (response.code) resolve(response.code)
+                else reject(new Error('No authorization code returned'))
+              },
+            })
+            client.requestCode()
+          })
+
+          const exchangeCallable = httpsCallable<
+            { code: string },
+            { success: boolean; calendarId: string; expiresAt: number }
+          >(getFirebaseFunctions(), 'gcalExchangeCode')
+          const exchangeRes = await exchangeCallable({ code: authCode })
+
+          if (exchangeRes.data?.success) {
+            const updated = await getGCalIntegration(user.uid)
+            setGcalDoc(updated)
+            setGcalMsg("Connected to 'ZeoTask' Google Calendar with permanent auto-refresh!")
+            return
+          }
+        } catch (gisErr) {
+          console.warn('Permanent code exchange failed or skipped; trying popup fallback:', gisErr)
+        }
+      }
+
+      // 2. Fallback: Firebase signInWithPopup
+      const provider = new GoogleAuthProvider()
+      provider.addScope('https://www.googleapis.com/auth/calendar')
+      provider.setCustomParameters({ prompt: 'consent', access_type: 'offline' })
+      const res = await signInWithPopup(getFirebaseAuth(), provider)
+      const cred = GoogleAuthProvider.credentialFromResult(res)
+      const token = cred?.accessToken
+      if (!token) throw new Error('Could not obtain Google Calendar authorization')
+
+      const calId = await ensureZeoTaskCalendar(token)
+      const now = Date.now()
+      const docData: GCalIntegrationDoc = {
+        enabled: true,
+        calendarId: calId,
+        calendarName: 'ZeoTask',
+        accessToken: token,
+        expiresAt: now + 3500 * 1000,
+        lastSyncedAt: new Date().toISOString(),
+      }
+
+      await saveGCalIntegration(user.uid, docData)
+      setGcalDoc(docData)
+
+      const coordinator = getSyncCoordinator(user.uid)
+      await coordinator.triggerSync('initial-connect', chores)
+      setGcalMsg("Connected to 'ZeoTask' Google Calendar successfully!")
+    } catch (err) {
+      console.error('GCal connect error:', err)
+      setGcalMsg(err instanceof Error ? err.message : 'Could not connect Google Calendar')
+    } finally {
+      setGcalBusy(false)
+    }
+  }
+
+  async function onSyncNowGCal() {
+    if (!user) return
+    setGcalBusy(true)
+    setGcalMsg(null)
+    try {
+      const coordinator = getSyncCoordinator(user.uid)
+      await coordinator.triggerSync('manual-button', chores)
+
+      // Also trigger Cloud Functions backend sync pass
+      try {
+        const triggerCallable = httpsCallable(getFirebaseFunctions(), 'gcalTriggerSync')
+        await triggerCallable()
+      } catch {
+        // Backend callable is complementary
+      }
+
+      const updated = await getGCalIntegration(user.uid)
+      setGcalDoc(updated)
+      setGcalMsg('Calendar synced successfully')
+    } catch (err) {
+      setGcalMsg(err instanceof Error ? err.message : 'Sync failed')
+    } finally {
+      setGcalBusy(false)
+    }
+  }
+
+  async function onDisconnectGCal() {
+    if (!user) return
+    setGcalBusy(true)
+    setGcalMsg(null)
+    try {
+      await saveGCalIntegration(user.uid, {
+        enabled: false,
+        accessToken: '',
+        refreshToken: '',
+        syncToken: null,
+      })
+      setGcalDoc(null)
+      setGcalMsg('Disconnected Google Calendar')
+    } catch (err) {
+      setGcalMsg(err instanceof Error ? err.message : 'Could not disconnect')
+    } finally {
+      setGcalBusy(false)
+    }
+  }
 
   async function persistNotif(next: NotificationSettings) {
     if (!user) return
@@ -355,6 +495,88 @@ export function ProfilePage() {
           </ul>
           {notifMsg && (
             <p className="mt-2 text-xs text-[var(--muted)]">{notifMsg}</p>
+          )}
+        </div>
+
+        <div className="mt-4 border-t border-[var(--hairline)] pt-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CalendarIcon size={18} className="text-[var(--accent)]" />
+              <h3 className="text-sm font-semibold text-[var(--ink)]">
+                Google Calendar 2-Way Sync
+              </h3>
+            </div>
+            {gcalDoc?.enabled && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                Active
+              </span>
+            )}
+          </div>
+
+          <p className="mt-1 text-xs text-[var(--muted)]">
+            Two-way sync with a dedicated <strong>"ZeoTask"</strong> calendar in Google Calendar. All-day tasks sit in the all-day banner; timed tasks sync as 30-min slots. Deleting in either place deletes on both sides.
+          </p>
+
+          {gcalDoc?.enabled ? (
+            <div className="mt-3 space-y-3">
+              <div className="rounded-xl border border-[var(--hairline)] bg-[var(--surface-sunken)] p-3 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[var(--muted)]">Calendar</span>
+                  <span className="font-medium text-[var(--ink)]">
+                    {gcalDoc.calendarName || 'ZeoTask'}
+                  </span>
+                </div>
+                <div className="mt-1.5 flex items-center justify-between">
+                  <span className="text-[var(--muted)]">Last synced</span>
+                  <span className="font-mono-meta text-[var(--ink)]">
+                    {gcalDoc.lastSyncedAt
+                      ? new Date(gcalDoc.lastSyncedAt).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })
+                      : 'Never'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={gcalBusy}
+                  onClick={() => void onSyncNowGCal()}
+                  className="focus-ring inline-flex items-center gap-2 rounded-[var(--radius-control)] bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {gcalBusy ? 'Syncing...' : 'Sync Now'}
+                </button>
+                <button
+                  type="button"
+                  disabled={gcalBusy}
+                  onClick={() => void onDisconnectGCal()}
+                  className="focus-ring rounded-[var(--radius-control)] border border-[var(--hairline)] px-3 py-2 text-sm text-[var(--muted)] hover:bg-[var(--quiet)]"
+                >
+                  Disconnect
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-3">
+              <button
+                type="button"
+                disabled={gcalBusy}
+                onClick={() => void onConnectGCal()}
+                className="focus-ring inline-flex items-center gap-2 rounded-[var(--radius-control)] bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[var(--accent-pressed)] disabled:opacity-50"
+              >
+                <CalendarIcon size={16} />
+                {gcalBusy ? 'Connecting...' : 'Connect Google Calendar'}
+              </button>
+            </div>
+          )}
+
+          {gcalMsg && (
+            <p className="mt-2 text-xs text-[var(--muted)]" aria-live="polite">
+              {gcalMsg}
+            </p>
           )}
         </div>
 

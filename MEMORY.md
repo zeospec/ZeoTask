@@ -151,4 +151,29 @@ npm run build
   - Refactored `functions/src/index.ts`: switched schedule to `every 10 minutes` with a 30-minute grace window; replaced full scan with indexed query `where('nextReminderAt', '<=', nowIso).limit(50)`; decoupled morning digest so active chores are only read during the morning digest window once per day; prunes invalid FCM tokens automatically; includes one-time self-healing migration (`remindersMigratedV2`) for existing active chores.
   - Added user-level `hasPushTokens` sync in `src/lib/push.ts` to bypass chore checks completely when users have no push devices registered. Added self-healing client backfill in `useChores.tsx`.
   - Read usage projected to drop from ~4,896 reads/day to ~288–310 reads/day (~94% reduction).
+- **2026-09-09:** Hardened All-Day Tasks & Google Calendar Permanent 2-Way Sync:
+  - **All-Day Tasks (Native, no 11:59 PM timestamp):**
+    - Chrono parser hour certainty (`!dueDateMatch.start.isCertain('hour')`) sets `isAllDay = true` and avoids forcing 23:59:59.
+    - Added `isAllDay` to `Chore`, `Subtask`, `ChoreCompleteSnapshot`.
+    - Added `formatDueDisplay`, `parseChoreDue`, and `isChoreOverdue` in `scheduler.ts`. All-day tasks due today remain in `Today` without turning overdue during the day.
+    - Updated `DueDatePicker` with an `All-Day` toggle/chip and integrated into `CreateTaskModal`, `ChoreRow`, `ChoreDetailPage`, `InlineQuickAdd`, and `SearchOverlay`.
+  - **Permanent 2-Way Google Calendar Integration:**
+    - Dedicated secondary calendar `"ZeoTask"` isolating personal events and ensuring 100% deletion safety.
+    - Built `src/lib/gcal.ts` (API client handling all-day dates `start: { date }`, 30-min timed slots `start: { dateTime }`, incremental sync, and full active event listing).
+    - Built `src/lib/syncCoordinator.ts`:
+      - **Mutex lock:** Guarantees at most 1 sync runs at any time, coalescing all concurrent triggers into a single follow-up pass. Zero overlapping sync errors.
+      - **Outbound debounce (800ms) with flush-before-pull:** Local edits are committed to GCal before inbound pull runs, preventing lost updates.
+      - **Anti-echo loop protocol:** Stores `extendedProperties.private.zeoTaskUpdatedAt = chore.updatedAt`. Inbound sync ignores matching reflections.
+      - **Deletion symmetry & tombstones:** Deletions in GCal emit `status: "cancelled"`, deleting the task in ZeoTask. Deletions in ZeoTask delete the GCal event and register the event in tombstones (`gcalTombstones`) so it can never be resurrected. Full reconciliation fallback handles expired syncTokens (410).
+      - **Token auto-refresh:** Silent token check before sync calls, auto-renewing short-lived tokens in the background.
+    - Integrated with `useChores.tsx` (window focus & `visibilitychange` listeners). Added management card in `ProfilePage.tsx` with Connect, Active status, Sync Now, and Disconnect.
+    - **Cloud Functions Companion (`functions/src/gcal.ts` & `functions/src/index.ts`):**
+      - **Single Scheduler & Cost Optimization:** Zero additional Cloud Schedulers created. All GCal sync and token management runs inside the existing `reminderTick` job every 10 minutes.
+      - **15-Minute Token Refresh Margin:** Google access tokens last 60 minutes. The server checks token expiration and proactively renews when `< 15 minutes` remain. With a 10-minute scheduler interval, this provides two guaranteed opportunities to catch and renew the token before it expires, eliminating edge-case expirations.
+      - **Incremental Outbound Reads (0 Reads when Idle):** Outbound query uses `where('updatedAt', '>', integration.lastSyncedAt).limit(50)` so if no chores were modified in ZeoTask, exactly 0 documents are read from Firestore.
+      - **Firestore as Single Source of Truth:** Changes from Google Calendar write directly to Firestore on the server; the frontend simply consumes Firestore via its standard real-time `onSnapshot` subscription without extra REST roundtrips.
+      - **Rescheduled Event Push Notifications:** When an event is moved or edited in Google Calendar while ZeoTask is closed, `syncGCalForUser` updates the Firestore chore and recomputes `nextReminderAt`, guaranteeing subsequent FCM push notifications reflect the rescheduled time.
+      - **Permanent OAuth Code Flow:** Exported `gcalExchangeCode` callable function to exchange GIS authorization code for permanent `refresh_token` and `access_token`, ensuring the user never has to re-authorize.
+      - **Sub-second Webhook:** Exported `gcalWebhook` HTTP endpoint to handle Google Calendar watch push notifications instantly. Exported `gcalRefreshToken` and `gcalTriggerSync` callables for client invocation.
+
 

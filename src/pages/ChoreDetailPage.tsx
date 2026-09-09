@@ -10,7 +10,7 @@ import { useLabels } from '../hooks/useLabels'
 import { toggleSubtask, updateChore, updateSubtask, deleteSubtask } from '../lib/chores'
 import { parseSubtaskTitle } from '../lib/taskParsers'
 import { sanitizeHtml, isPlainOrEmptyDescription } from '../lib/html'
-import { recurrenceSummary } from '../lib/scheduler'
+import { formatDueDisplay, recurrenceSummary } from '../lib/scheduler'
 import type { Chore, Subtask } from '../types/models'
 
 type ShellContext = {
@@ -187,9 +187,7 @@ export function ChoreDetailPage() {
       </div>
 
       <p className="font-mono-meta text-xs uppercase tracking-widest text-[var(--muted)]">
-        {chore.dueAt
-          ? format(parseISO(chore.dueAt), 'EEE · h:mm a')
-          : 'No due date'}
+        {formatDueDisplay(chore) || 'No due date'}
         {chore.frequency !== 'once' &&
           chore.frequency !== 'no_repeat' &&
           ` · ${recurrenceSummary(chore.frequency, chore.repeatEvery, chore.repeatWeekdays)}`}
@@ -214,7 +212,7 @@ export function ChoreDetailPage() {
           <div className="mt-3 flex flex-wrap gap-2">
             {chore.dueAt && (
               <span className="rounded-full bg-[var(--accent-wash)] px-3 py-1.5 font-mono-meta text-xs text-[var(--accent)]">
-                {format(parseISO(chore.dueAt), 'EEE · h:mm a')}
+                {formatDueDisplay(chore)}
               </span>
             )}
             {labels.map((l) => (

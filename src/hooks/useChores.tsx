@@ -19,6 +19,7 @@ import {
 } from '../lib/chores'
 import { moveDueToToday } from '../lib/scheduler'
 import type { Chore, ChoreCompleteSnapshot, Subtask } from '../types/models'
+import { getSyncCoordinator } from '../lib/syncCoordinator'
 import { useAuth } from './useAuth'
 
 export type ToastAction = {
@@ -90,6 +91,36 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
     )
   }, [user])
 
+  useEffect(() => {
+    if (!user) return
+    const coordinator = getSyncCoordinator(user.uid)
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void coordinator.triggerSync('visibility-change', chores)
+      }
+    }
+    const onWindowFocus = () => {
+      void coordinator.triggerSync('window-focus', chores)
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('focus', onWindowFocus)
+
+    void coordinator.triggerSync('app-init', chores)
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void coordinator.triggerSync('interval', chores)
+      }
+    }, 5 * 60 * 1000)
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('focus', onWindowFocus)
+      clearInterval(interval)
+    }
+  }, [user, chores])
 
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
@@ -109,11 +140,11 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
     requestAnimationFrame(() => setAnnounce(message))
   }, [])
 
-  const markPending = useCallback((id: string, on: boolean) => {
+  const markPending = useCallback((choreId: string, isPending: boolean) => {
     setPendingIds((prev) => {
       const next = new Set(prev)
-      if (on) next.add(id)
-      else next.delete(id)
+      if (isPending) next.add(choreId)
+      else next.delete(choreId)
       return next
     })
   }, [])
@@ -121,12 +152,11 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
   const runWrite = useCallback(
     (choreId: string, promise: Promise<void>, failMessage: string) => {
       markPending(choreId, true)
-      void promise
-        .catch((err) => {
+      promise
+        .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : failMessage
           pushToast(msg)
-          announceLive(failMessage)
-          setError(msg)
+          announceLive(msg)
         })
         .finally(() => markPending(choreId, false))
     },
@@ -139,6 +169,38 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       const { id, promise } = createChoreWrite(user.uid, input)
       runWrite(id, promise, 'Could not create task')
       announceLive(`Created ${input.title}`)
+
+      const stamp = new Date().toISOString()
+      const choreMock: Chore = {
+        id,
+        title: input.title,
+        description: input.description ?? '',
+        priority: input.priority ?? 0,
+        status: 'none',
+        dueAt: input.dueAt ?? null,
+        isAllDay: input.isAllDay,
+        isRolling: input.isRolling ?? true,
+        frequency: input.frequency ?? 'once',
+        repeatEvery: input.repeatEvery ?? 1,
+        repeatWeekdays: input.repeatWeekdays ?? [],
+        labelIds: input.labelIds ?? [],
+        projectId: input.projectId ?? null,
+        subtasks: input.subtasks ?? [],
+        reminderEnabled: input.reminderEnabled ?? true,
+        predueHours: input.predueHours ?? 24,
+        nextReminderAt: null,
+        lastDuePushAt: null,
+        lastPreduePushAt: null,
+        lastOverduePushAt: null,
+        gcalEventId: null,
+        gcalLastSyncedAt: null,
+        archivedAt: null,
+        createdAt: stamp,
+        updatedAt: stamp,
+        lastCompletedAt: null,
+      }
+      getSyncCoordinator(user.uid).enqueueOutboundChore(choreMock)
+
       return id
     },
     [announceLive, runWrite, user],
@@ -153,6 +215,10 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
         updateChoreWrite(user.uid, choreId, patch, existing),
         'Could not save task',
       )
+      if (existing) {
+        const merged = { ...existing, ...patch, updatedAt: new Date().toISOString() }
+        getSyncCoordinator(user.uid).enqueueOutboundChore(merged)
+      }
       announceLive('Task saved')
     },
     [announceLive, chores, runWrite, user],
@@ -164,6 +230,8 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       const { snapshot, promise, nextDue } = completeChoreWrite(user.uid, chore)
       undoRef.current.set(chore.id, snapshot)
       runWrite(chore.id, promise, 'Could not complete task')
+
+      getSyncCoordinator(user.uid).enqueueOutboundChore(chore)
 
       const title = chore.title
       announceLive(`Completed ${title}`)
@@ -189,10 +257,14 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
   const deleteTask = useCallback(
     (choreId: string, title?: string) => {
       if (!user) return
+      const target = chores.find((c) => c.id === choreId)
+      if (target?.gcalEventId) {
+        void getSyncCoordinator(user.uid).handleDeleteChore(target.gcalEventId)
+      }
       runWrite(choreId, deleteChoreWrite(user.uid, choreId), 'Could not delete task')
       announceLive(title ? `Deleted ${title}` : 'Task deleted')
     },
-    [announceLive, runWrite, user],
+    [announceLive, chores, runWrite, user],
   )
 
   const moveOverdueToToday = useCallback(

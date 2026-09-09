@@ -1,10 +1,37 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
+function devServiceWorkerMiddleware(): Plugin {
+  return {
+    name: 'dev-service-worker-middleware',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url === '/sw.js') {
+          res.setHeader('Content-Type', 'text/javascript')
+          res.end(
+            "// Dev fallback for stale production SW registrations\n" +
+            "self.addEventListener('install', () => self.skipWaiting());\n" +
+            "self.addEventListener('activate', () => self.registration.unregister());\n",
+          )
+          return
+        }
+        if (req.url === '/firebase-messaging-sw.js') {
+          res.setHeader('Content-Type', 'text/javascript')
+          res.end('// Dev fallback for Firebase messaging SW\n')
+          return
+        }
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig({
   plugins: [
+    devServiceWorkerMiddleware(),
     react(),
     tailwindcss(),
     VitePWA({

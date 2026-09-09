@@ -72,6 +72,7 @@ export function ProfilePage() {
               client_id: clientId,
               scope: 'https://www.googleapis.com/auth/calendar',
               ux_mode: 'popup',
+              prompt: 'consent',
               callback: (response: { code?: string; error?: string }) => {
                 if (response.error) reject(new Error(response.error))
                 else if (response.code) resolve(response.code)
@@ -107,7 +108,9 @@ export function ProfilePage() {
             setGcalMsg('Sign-in cancelled')
             return
           }
-          console.warn('Permanent code exchange failed or skipped; trying popup fallback:', gisErr)
+          console.error('Permanent code exchange failed:', gisErr)
+          setGcalMsg(gisErr instanceof Error ? gisErr.message : 'Permanent code exchange failed')
+          return
         }
       }
 

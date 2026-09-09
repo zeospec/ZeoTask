@@ -64,7 +64,7 @@ export function AppShell() {
   const { syncing } = useChores()
   const { projects } = useProjects()
   const { labels } = useLabels()
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   const activeProjectId = searchParams.get('project')
   const activeLabelId = searchParams.get('label')
   const [createOpen, setCreateOpen] = useState(false)
@@ -139,35 +139,27 @@ export function AppShell() {
   const activeLabel = activeLabelId ? labels.find((l) => l.id === activeLabelId) : null
 
   const handleSelectProject = useCallback(
-    (id: string | null) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev)
-          if (id) next.set('project', id)
-          else next.delete('project')
-          return next
-        },
-        { replace: true },
-      )
-      if (!onHome) navigate(id ? `/?project=${encodeURIComponent(id)}` : '/')
+    (id: string | null, options?: { clearLabel?: boolean }) => {
+      const next = new URLSearchParams(location.search)
+      if (id) next.set('project', id)
+      else next.delete('project')
+      if (options?.clearLabel) next.delete('label')
+      const search = next.toString()
+      navigate(search ? `/?${search}` : '/', { replace: true })
     },
-    [navigate, onHome, setSearchParams],
+    [location.search, navigate],
   )
 
   const handleSelectLabel = useCallback(
-    (id: string | null) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev)
-          if (id) next.set('label', id)
-          else next.delete('label')
-          return next
-        },
-        { replace: true },
-      )
-      if (!onHome) navigate(id ? `/?label=${encodeURIComponent(id)}` : '/')
+    (id: string | null, options?: { clearProject?: boolean }) => {
+      const next = new URLSearchParams(location.search)
+      if (id) next.set('label', id)
+      else next.delete('label')
+      if (options?.clearProject) next.delete('project')
+      const search = next.toString()
+      navigate(search ? `/?${search}` : '/', { replace: true })
     },
-    [navigate, onHome, setSearchParams],
+    [location.search, navigate],
   )
 
   useEffect(() => {
@@ -202,10 +194,9 @@ export function AppShell() {
 
       if (!typing && e.key.toLowerCase() === 'h') {
         e.preventDefault()
-        handleSelectProject(null)
-        handleSelectLabel(null)
         setActiveFilter(null)
         setViewMode('agenda')
+        navigate('/', { replace: true })
         return
       }
 
@@ -231,7 +222,7 @@ export function AppShell() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [handleSelectLabel, handleSelectProject])
+  }, [navigate])
 
   useEffect(() => {
     if (location.pathname === '/new') {
@@ -266,11 +257,10 @@ export function AppShell() {
   function handleFilterChange(nextFilter: FilterState | null) {
     setActiveFilter(nextFilter)
     if (!nextFilter || (activeLabelId && !nextFilter.labelIds.includes(activeLabelId))) {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev)
-        next.delete('label')
-        return next
-      }, { replace: true })
+      const next = new URLSearchParams(location.search)
+      next.delete('label')
+      const search = next.toString()
+      navigate(search ? `/?${search}` : '/', { replace: true })
     }
   }
 
@@ -612,13 +602,11 @@ export function AppShell() {
         onClose={() => setSidebarOpen(false)}
         activeProjectId={activeProjectId}
         onSelectProject={(id) => {
-          handleSelectProject(id)
-          handleSelectLabel(null)
+          handleSelectProject(id, { clearLabel: true })
         }}
         activeLabelId={activeLabelId}
         onSelectLabel={(id) => {
-          handleSelectLabel(id)
-          handleSelectProject(null)
+          handleSelectLabel(id, { clearProject: true })
         }}
       />
 

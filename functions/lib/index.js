@@ -336,7 +336,7 @@ exports.gcalExchangeCode = (0, https_1.onCall)(async (request) => {
             calendarId,
             calendarName: 'ZeoTask',
             accessToken,
-            refreshToken: refreshToken || undefined,
+            refreshToken: refreshToken || existingData?.refreshToken || undefined,
             expiresAt: now + expiresIn * 1000,
             syncToken: null,
             tombstones: [],

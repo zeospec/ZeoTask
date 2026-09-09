@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { NavLink } from 'react-router-dom'
 import { useProjects } from '../hooks/useProjects'
 import { useLabels } from '../hooks/useLabels'
@@ -60,7 +61,7 @@ export function Sidebar({
     }
   }, [creatingLabel])
 
-  return (
+  return createPortal(
     <>
       {/* Backdrop */}
       {open && (
@@ -74,7 +75,7 @@ export function Sidebar({
       {/* Drawer */}
       <div
         className={`fixed inset-y-0 left-0 z-50 w-72 transform bg-[var(--surface)] shadow-[var(--shadow-card)] transition-transform duration-300 ease-out ${
-          open ? 'translate-x-0' : '-translate-x-full'
+          open ? 'translate-x-0 pointer-events-auto' : '-translate-x-full pointer-events-none'
         }`}
       >
         <div className="flex h-full flex-col">
@@ -354,6 +355,7 @@ export function Sidebar({
           }}
         />
       )}
-    </>
+    </>,
+    document.body,
   )
 }

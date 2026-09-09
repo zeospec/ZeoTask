@@ -110,6 +110,9 @@ npm run build
 - **Never put un-gated Firestore writes in client `useEffect` on `chores`:** Updating documents in a `useEffect([chores])` changes `updatedAt`, which re-triggers `subscribeChores`, creating an infinite write loop that flickers the task list and floods Firestore. All migrations should happen server-side in Cloud Functions.
 - **Deterministic Sort Tie-Breakers:** When sorting tasks by `dueAt`, tasks with identical due dates return `0` from `localeCompare`. Always provide deterministic tie-breakers (priority → title → id/createdAt) to prevent DOM flickering or list re-sorting when document timestamps update.
 - **Scheduled Cloud Function Firestore Reads:** Never perform full collection scans `where('archivedAt', '==', null)` in recurring cron functions. Always index with `nextReminderAt: string | null` and query `where('nextReminderAt', '<=', nowIso)` to avoid massive repeated reads (~4.8K reads/day for 19 tasks). Decouple daily digests so they only read active chores once a day.
+- **`useSearchParams` / React Router Functional Updates:** In `react-router-dom`, `setSearchParams(fn)` reads `searchParams` from the current render snapshot. Calling `setSearchParams` or `navigate` twice synchronously in the same handler (e.g. `handleSelectProject` followed by `handleSelectLabel(null)`) causes the second call to overwrite the first with stale state. Always perform multi-param URL updates atomically in a single navigation call.
+- **Sidebar Drawer Portal & Pointer Events:** The Sidebar drawer is portaled to `document.body` to prevent stacking context or transform clipping, and must have `pointer-events-none` when `-translate-x-full` so hidden drawers do not intercept touch events.
+- **Dev Mode Service Worker MIME Type Fallback:** When running Vite dev server locally, if the browser holds a stale production registration for `/sw.js` or Firebase Messaging requests `/firebase-messaging-sw.js`, Vite's default SPA middleware falls back to returning `index.html` (`text/html`), causing Chrome to log `The script has an unsupported MIME type ('text/html')`. A dev-only Vite middleware (`apply: 'serve'`) intercepts `/sw.js` and `/firebase-messaging-sw.js` to serve valid JS (`text/javascript`) and unregister stale workers.
 
 ## Session log
 
@@ -141,6 +144,10 @@ npm run build
   - Extended live NLP syntax highlighting to checklist items: upgraded `SmartTaskTitleInput` to support customizable typography, ref forwarding, escape handling, and rendered it across checklist draft inputs, inline edits, and edit modal.
   - Implemented inline double confirmation when deleting checklist items across all surfaces (`CreateTaskModal`, `ChoreDetailPage`, `EditSubtaskModal`) to prevent accidental deletion.
   - Performance & bundle optimization: route code-splitting with `React.lazy` (`ChoreDetailPage`, `CompletedPage`, `ProfilePage`), Rollup manual vendor chunking (`firebase`, `nlp-date`, `dnd`, `vendor`), and `React.memo` for `ChoreRow`. Initial bundle dropped from 1,153 kB to 142 kB.
+- **2026-09-09:** Fixed Sidebar project click:
+  - Eliminated race condition where `handleSelectProject` followed by `handleSelectLabel(null)` overwrote the URL search params due to stale render snapshots in `react-router-dom`.
+  - Upgraded project and label selection in `AppShell` to perform single atomic navigation with options (`{ clearLabel: true }` / `{ clearProject: true }`).
+  - Portaled `Sidebar` to `document.body` and added `pointer-events-none` when closed so off-screen drawers do not intercept touch/click events.
   - Subtask recurrence hygiene: in `completeChore`, subtasks reset `dueAt: null` alongside `completed: false` when parent recurs, preventing historical date traps.
   - Non-rolling recurrence catch-up: `nextDueAfterComplete` safely loops overdue non-rolling tasks up to the current date to eliminate repetitive completion backlog cycles.
   - Navigation & Deep Linking: Active projects and labels synchronize with URL search params (`?project=...&label=...`), enabling back/forward history and reload persistence. Added clickable label filtering in `Sidebar` and clearable badges in the `AppShell` header.

@@ -16,6 +16,16 @@ export interface GCalIntegrationData {
   tombstones?: string[]
 }
 
+export interface SubtaskData {
+  id: string
+  title: string
+  completed: boolean
+  dueAt?: string | null
+  isAllDay?: boolean
+  gcalEventId?: string | null
+  gcalLastSyncedAt?: string | null
+}
+
 export interface ChoreData {
   id?: string
   title?: string
@@ -30,6 +40,7 @@ export interface ChoreData {
   gcalLastSyncedAt?: string | null
   createdAt?: string
   updatedAt?: string
+  subtasks?: SubtaskData[]
 }
 
 function authHeaders(accessToken: string): Record<string, string> {
@@ -219,6 +230,10 @@ export function computeChoreNextReminder(
   return null
 }
 
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>?/gm, '').trim()
+}
+
 function buildBackendGCalPayload(chore: ChoreData & { id: string }) {
   const isAllDay = Boolean(chore.isAllDay)
   let start: { date?: string; dateTime?: string }
@@ -249,9 +264,19 @@ function buildBackendGCalPayload(chore: ChoreData & { id: string }) {
     end = { date: todayStr }
   }
 
+  let plainDesc = chore.description ? stripHtml(chore.description) : ''
+  if (chore.subtasks && chore.subtasks.length > 0) {
+    const checklistText = chore.subtasks
+      .map((s) => `[${s.completed ? '✓' : ' '}] ${s.title}`)
+      .join('\n')
+    plainDesc = plainDesc
+      ? `${plainDesc}\n\nChecklist:\n${checklistText}`
+      : `Checklist:\n${checklistText}`
+  }
+
   return {
     summary: chore.title || 'Untitled Task',
-    description: chore.description || '',
+    description: plainDesc,
     start,
     end,
     extendedProperties: {
@@ -261,6 +286,89 @@ function buildBackendGCalPayload(chore: ChoreData & { id: string }) {
       },
     },
   }
+}
+
+function buildBackendGCalSubtaskPayload(
+  subtask: SubtaskData,
+  parentChore: ChoreData & { id: string },
+) {
+  const isAllDay = Boolean(subtask.isAllDay)
+  let start: { date?: string; dateTime?: string }
+  let end: { date?: string; dateTime?: string }
+
+  if (isAllDay && subtask.dueAt) {
+    const dateStr = subtask.dueAt.substring(0, 10)
+    const d = new Date(dateStr + 'T00:00:00Z')
+    d.setUTCDate(d.getUTCDate() + 1)
+    const nextDateStr = d.toISOString().substring(0, 10)
+    start = { date: dateStr }
+    end = { date: nextDateStr }
+  } else if (subtask.dueAt) {
+    const dueMs = Date.parse(subtask.dueAt)
+    if (!Number.isNaN(dueMs)) {
+      start = { dateTime: new Date(dueMs).toISOString() }
+      end = { dateTime: new Date(dueMs + 30 * 60 * 1000).toISOString() }
+    } else {
+      const todayStr = new Date().toISOString().substring(0, 10)
+      start = { date: todayStr }
+      end = { date: todayStr }
+    }
+  } else {
+    const todayStr = new Date().toISOString().substring(0, 10)
+    start = { date: todayStr }
+    end = { date: todayStr }
+  }
+
+  return {
+    summary: `↳ ${subtask.title || 'Checklist item'} (${parentChore.title || 'Task'})`,
+    description: `Checklist item for: ${parentChore.title || 'Task'}`,
+    start,
+    end,
+    extendedProperties: {
+      private: {
+        zeoTaskId: parentChore.id,
+        zeoSubtaskId: subtask.id,
+        zeoTaskUpdatedAt: parentChore.updatedAt || '',
+      },
+    },
+  }
+}
+
+async function pushSubtaskToGCalBackend(
+  subtask: SubtaskData,
+  parentChore: ChoreData & { id: string },
+  calendarId: string,
+  accessToken: string,
+): Promise<{ gcalEventId: string; updated: string } | null> {
+  const payload = buildBackendGCalSubtaskPayload(subtask, parentChore)
+  if (subtask.gcalEventId) {
+    const patchUrl = `${GCAL_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(subtask.gcalEventId)}`
+    const patchRes = await fetch(patchUrl, {
+      method: 'PATCH',
+      headers: authHeaders(accessToken),
+      body: JSON.stringify(payload),
+    })
+    if (patchRes.ok) {
+      const data = await patchRes.json()
+      return { gcalEventId: data.id, updated: data.updated }
+    }
+    if (patchRes.status !== 404 && patchRes.status !== 410) {
+      return null
+    }
+  }
+
+  // Insert new event
+  const insertUrl = `${GCAL_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events`
+  const insertRes = await fetch(insertUrl, {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  })
+  if (insertRes.ok) {
+    const data = await insertRes.json()
+    return { gcalEventId: data.id, updated: data.updated }
+  }
+  return null
 }
 
 async function pushChoreToGCalBackend(
@@ -387,13 +495,71 @@ export async function syncGCalForUser(
         logger.info('Deleting chore deleted in Google Calendar', { uid, choreId: choreDoc.id })
         tombstones.add(event.id)
         await choreDoc.ref.delete()
+        continue
+      }
+
+      // Check if cancelled event was a subtask
+      const zeoTaskId = event.extendedProperties?.private?.zeoTaskId
+      const zeoSubtaskId = event.extendedProperties?.private?.zeoSubtaskId
+      if (zeoTaskId) {
+        const parentDoc = await db.doc(`users/${uid}/chores/${zeoTaskId}`).get()
+        if (parentDoc.exists) {
+          const pData = parentDoc.data() as ChoreData
+          const sIdx = pData.subtasks?.findIndex(
+            (s) => (zeoSubtaskId && s.id === zeoSubtaskId) || s.gcalEventId === event.id,
+          )
+          if (sIdx !== undefined && sIdx >= 0 && pData.subtasks) {
+            tombstones.add(event.id)
+            const nextSubtasks = [...pData.subtasks]
+            nextSubtasks[sIdx] = { ...nextSubtasks[sIdx], completed: true, gcalEventId: null }
+            await parentDoc.ref.update({
+              subtasks: nextSubtasks,
+              updatedAt: FieldValue.serverTimestamp(),
+            })
+          }
+        }
       }
       continue
     }
 
     // C. Event Modified or Created in Google Calendar
     const zeoTaskId = event.extendedProperties?.private?.zeoTaskId
+    const zeoSubtaskId = event.extendedProperties?.private?.zeoSubtaskId
     const zeoTaskUpdatedAt = event.extendedProperties?.private?.zeoTaskUpdatedAt
+
+    // Handle subtask event modified in Google Calendar
+    if (zeoSubtaskId && zeoTaskId) {
+      const parentDoc = await db.doc(`users/${uid}/chores/${zeoTaskId}`).get()
+      if (parentDoc.exists) {
+        const pData = parentDoc.data() as ChoreData
+        const sIdx = pData.subtasks?.findIndex(
+          (s) => s.id === zeoSubtaskId || s.gcalEventId === event.id,
+        )
+        if (sIdx !== undefined && sIdx >= 0 && pData.subtasks) {
+          const s = pData.subtasks[sIdx]
+          // Anti-Echo check
+          if (zeoTaskUpdatedAt && zeoTaskUpdatedAt === pData.updatedAt) {
+            continue
+          }
+
+          const isAllDay = Boolean(event.start.date && !event.start.dateTime)
+          const dueAt = event.start.date || event.start.dateTime || null
+          const nextSubtasks = [...pData.subtasks]
+          nextSubtasks[sIdx] = {
+            ...s,
+            dueAt,
+            isAllDay,
+            gcalEventId: event.id,
+            gcalLastSyncedAt: event.updated || nowIso,
+          }
+          await parentDoc.ref.update({
+            subtasks: nextSubtasks,
+            updatedAt: FieldValue.serverTimestamp(),
+          })
+          continue
+        }
+      }
+    }
 
     let targetChoreDoc: FirebaseFirestore.DocumentSnapshot | null = null
 
@@ -503,19 +669,17 @@ export async function syncGCalForUser(
   for (const doc of choresSnap.docs) {
     const chore = { id: doc.id, ...(doc.data() as ChoreData) }
 
-    // Case A: Chore archived/completed, delete from GCal
-    if (chore.archivedAt && chore.gcalEventId) {
+    // Case A: Chore archived/completed OR due date removed, delete from GCal
+    if ((chore.archivedAt || !chore.dueAt) && chore.gcalEventId) {
       tombstones.add(chore.gcalEventId)
       await deleteChoreFromGCalBackend(chore.gcalEventId, calendarId, token)
       await doc.ref.update({
         gcalEventId: null,
         gcalLastSyncedAt: nowIso,
       })
-      continue
-    }
-
-    // Case B: Chore active with due date, check if outbound push needed
-    if (!chore.archivedAt && chore.dueAt) {
+      chore.gcalEventId = null
+    } else if (!chore.archivedAt && chore.dueAt) {
+      // Case B: Chore active with due date, check if outbound push needed
       const needsPush =
         !chore.gcalEventId ||
         !chore.gcalLastSyncedAt ||
@@ -528,7 +692,53 @@ export async function syncGCalForUser(
             gcalEventId: pushResult.gcalEventId,
             gcalLastSyncedAt: pushResult.updated,
           })
+          chore.gcalEventId = pushResult.gcalEventId
+          chore.gcalLastSyncedAt = pushResult.updated
         }
+      }
+    }
+
+    // Subtasks with deadlines push/cleanup
+    if (chore.subtasks && chore.subtasks.length > 0) {
+      let subtasksModified = false
+      const nextSubtasks = [...chore.subtasks]
+
+      for (let i = 0; i < nextSubtasks.length; i++) {
+        const s = nextSubtasks[i]
+        if (s.dueAt && !s.completed && !chore.archivedAt) {
+          const needsSubPush =
+            !s.gcalEventId ||
+            !s.gcalLastSyncedAt ||
+            (chore.updatedAt && chore.updatedAt > s.gcalLastSyncedAt)
+
+          if (needsSubPush) {
+            const pushResult = await pushSubtaskToGCalBackend(s, chore, calendarId, token)
+            if (
+              pushResult &&
+              (s.gcalEventId !== pushResult.gcalEventId || s.gcalLastSyncedAt !== pushResult.updated)
+            ) {
+              nextSubtasks[i] = {
+                ...s,
+                gcalEventId: pushResult.gcalEventId,
+                gcalLastSyncedAt: pushResult.updated,
+              }
+              subtasksModified = true
+            }
+          }
+        } else if (s.gcalEventId && (s.completed || !s.dueAt || chore.archivedAt)) {
+          tombstones.add(s.gcalEventId)
+          await deleteChoreFromGCalBackend(s.gcalEventId, calendarId, token)
+          nextSubtasks[i] = {
+            ...s,
+            gcalEventId: null,
+            gcalLastSyncedAt: nowIso,
+          }
+          subtasksModified = true
+        }
+      }
+
+      if (subtasksModified) {
+        await doc.ref.update({ subtasks: nextSubtasks })
       }
     }
   }

@@ -1,5 +1,5 @@
 import { addDays, format } from 'date-fns'
-import type { Chore } from '../types/models'
+import type { Chore, Subtask } from '../types/models'
 import { parseChoreDue } from './scheduler'
 
 const GCAL_API_BASE = 'https://www.googleapis.com/calendar/v3'
@@ -21,6 +21,7 @@ export interface GCalEvent {
   extendedProperties?: {
     private?: {
       zeoTaskId?: string
+      zeoSubtaskId?: string
       zeoTaskUpdatedAt?: string
       clientInstanceId?: string
     }
@@ -127,7 +128,15 @@ function buildGCalEventPayload(chore: Chore) {
     end = { date: endDateStr }
   }
 
-  const plainDesc = chore.description ? stripHtml(chore.description) : ''
+  let plainDesc = chore.description ? stripHtml(chore.description) : ''
+  if (chore.subtasks && chore.subtasks.length > 0) {
+    const checklistText = chore.subtasks
+      .map((s) => `[${s.completed ? '✓' : ' '}] ${s.title}`)
+      .join('\n')
+    plainDesc = plainDesc
+      ? `${plainDesc}\n\nChecklist:\n${checklistText}`
+      : `Checklist:\n${checklistText}`
+  }
 
   return {
     summary: chore.title || 'Untitled Task',
@@ -189,6 +198,92 @@ export async function pushTaskToGCal(
   if (!insertRes.ok) {
     if (insertRes.status === 401) throw new Error('UNAUTHORIZED')
     throw new Error(`Failed to insert GCal event: ${insertRes.statusText}`)
+  }
+
+  const data = await insertRes.json()
+  return { gcalEventId: data.id, updated: data.updated }
+}
+
+/**
+ * Builds Google Calendar event payload for a Subtask with a deadline.
+ */
+function buildGCalSubtaskPayload(subtask: Subtask, parentChore: Chore) {
+  const isAllDay = Boolean(subtask.isAllDay)
+  const due = parseChoreDue(subtask.dueAt)
+
+  let start: GCalEventDate
+  let end: GCalEventDate
+
+  if (isAllDay && due) {
+    const startDateStr = format(due, 'yyyy-MM-dd')
+    const endDateStr = format(addDays(due, 1), 'yyyy-MM-dd')
+    start = { date: startDateStr }
+    end = { date: endDateStr }
+  } else if (due) {
+    const startIso = due.toISOString()
+    const endIso = new Date(due.getTime() + 30 * 60 * 1000).toISOString()
+    start = { dateTime: startIso }
+    end = { dateTime: endIso }
+  } else {
+    const today = new Date()
+    const startDateStr = format(today, 'yyyy-MM-dd')
+    const endDateStr = format(addDays(today, 1), 'yyyy-MM-dd')
+    start = { date: startDateStr }
+    end = { date: endDateStr }
+  }
+
+  return {
+    summary: `↳ ${subtask.title || 'Checklist item'} (${parentChore.title || 'Task'})`,
+    description: `Checklist item for: ${parentChore.title}`,
+    start,
+    end,
+    extendedProperties: {
+      private: {
+        zeoTaskId: parentChore.id,
+        zeoSubtaskId: subtask.id,
+        zeoTaskUpdatedAt: parentChore.updatedAt,
+      },
+    },
+  }
+}
+
+/**
+ * Pushes a subtask to Google Calendar (create or update).
+ */
+export async function pushSubtaskToGCal(
+  subtask: Subtask,
+  parentChore: Chore,
+  calendarId: string,
+  accessToken: string,
+): Promise<{ gcalEventId: string; updated: string }> {
+  const payload = buildGCalSubtaskPayload(subtask, parentChore)
+
+  if (subtask.gcalEventId) {
+    const url = `${GCAL_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(subtask.gcalEventId)}`
+    const patchRes = await fetch(url, {
+      method: 'PATCH',
+      headers: authHeaders(accessToken),
+      body: JSON.stringify(payload),
+    })
+
+    if (patchRes.ok) {
+      const data = await patchRes.json()
+      return { gcalEventId: data.id, updated: data.updated }
+    }
+    if (patchRes.status === 401) throw new Error('UNAUTHORIZED')
+  }
+
+  // Insert new event
+  const insertUrl = `${GCAL_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events`
+  const insertRes = await fetch(insertUrl, {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  })
+
+  if (!insertRes.ok) {
+    if (insertRes.status === 401) throw new Error('UNAUTHORIZED')
+    throw new Error(`Failed to insert GCal subtask event: ${insertRes.statusText}`)
   }
 
   const data = await insertRes.json()

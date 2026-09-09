@@ -324,7 +324,12 @@ exports.gcalExchangeCode = (0, https_1.onCall)(async (request) => {
     const db = (0, firestore_1.getFirestore)();
     try {
         const { accessToken, refreshToken, expiresIn } = await (0, gcal_1.exchangeOAuthCode)(clientId, clientSecret, code, redirectUri);
-        const calendarId = await (0, gcal_1.ensureBackendZeoTaskCalendar)(accessToken);
+        const existingSnap = await db.doc(`users/${uid}/integrations/googleCalendar`).get();
+        const existingData = existingSnap.data();
+        let calendarId = existingData?.calendarId;
+        if (!calendarId) {
+            calendarId = await (0, gcal_1.ensureBackendZeoTaskCalendar)(accessToken);
+        }
         const now = Date.now();
         const docData = {
             enabled: true,
@@ -335,7 +340,7 @@ exports.gcalExchangeCode = (0, https_1.onCall)(async (request) => {
             expiresAt: now + expiresIn * 1000,
             syncToken: null,
             tombstones: [],
-            lastSyncedAt: new Date().toISOString(),
+            lastSyncedAt: null,
         };
         await db.doc(`users/${uid}/integrations/googleCalendar`).set(docData, { merge: true });
         // Trigger initial background sync

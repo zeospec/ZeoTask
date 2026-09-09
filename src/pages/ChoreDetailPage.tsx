@@ -11,6 +11,7 @@ import { toggleSubtask, updateChore, updateSubtask, deleteSubtask } from '../lib
 import { parseSubtaskTitle } from '../lib/taskParsers'
 import { sanitizeHtml, isPlainOrEmptyDescription } from '../lib/html'
 import { formatDueDisplay, recurrenceSummary } from '../lib/scheduler'
+import { getSyncCoordinator } from '../lib/syncCoordinator'
 import type { Chore, Subtask } from '../types/models'
 
 type ShellContext = {
@@ -74,19 +75,21 @@ export function ChoreDetailPage() {
     const finalTitle = subDue ? subTitle.trim() : (parsed.cleanedTitle || subTitle.trim())
     const finalDue = subDue || (parsed.dueAt ? parsed.dueAt.toISOString() : null)
 
+    const updatedSubtasks: Subtask[] = [
+      ...chore.subtasks,
+      {
+        id,
+        title: finalTitle,
+        completed: false,
+        dueAt: finalDue,
+      },
+    ]
+
     setBusy(true)
     runWrite(
       chore.id,
       updateChore(user.uid, chore.id, {
-        subtasks: [
-          ...chore.subtasks,
-          {
-            id,
-            title: finalTitle,
-            completed: false,
-            dueAt: finalDue,
-          },
-        ],
+        subtasks: updatedSubtasks,
       }).finally(() => {
         setBusy(false)
         setRecentlyAddedId(id)
@@ -95,6 +98,11 @@ export function ChoreDetailPage() {
       }),
       'Could not add subtask',
     )
+    getSyncCoordinator(user.uid).enqueueOutboundChore({
+      ...chore,
+      subtasks: updatedSubtasks,
+      updatedAt: new Date().toISOString(),
+    })
     setSubTitle('')
     setSubDue(null)
   }
@@ -114,6 +122,10 @@ export function ChoreDetailPage() {
     const finalDue =
       editingSubtaskDue || (parsed.dueAt ? parsed.dueAt.toISOString() : null)
 
+    const updatedSubtasks = chore.subtasks.map((s) =>
+      s.id === sId ? { ...s, title: finalTitle, dueAt: finalDue } : s,
+    )
+
     runWrite(
       chore.id,
       updateSubtask(user.uid, chore, sId, {
@@ -122,6 +134,11 @@ export function ChoreDetailPage() {
       }),
       'Could not update checklist item',
     )
+    getSyncCoordinator(user.uid).enqueueOutboundChore({
+      ...chore,
+      subtasks: updatedSubtasks,
+      updatedAt: new Date().toISOString(),
+    })
     setEditingSubtaskId(null)
     setEditingSubtaskTitle('')
     setEditingSubtaskDue(null)
@@ -129,11 +146,22 @@ export function ChoreDetailPage() {
 
   function deleteSubtaskAction(sId: string) {
     if (!user || !chore) return
+    const target = chore.subtasks.find((s) => s.id === sId)
+    if (target?.gcalEventId) {
+      void getSyncCoordinator(user.uid).handleDeleteChore(target.gcalEventId)
+    }
+    const updatedSubtasks = chore.subtasks.filter((s) => s.id !== sId)
+
     runWrite(
       chore.id,
       deleteSubtask(user.uid, chore, sId),
       'Could not remove checklist item',
     )
+    getSyncCoordinator(user.uid).enqueueOutboundChore({
+      ...chore,
+      subtasks: updatedSubtasks,
+      updatedAt: new Date().toISOString(),
+    })
   }
 
   return (
@@ -322,11 +350,19 @@ export function ChoreDetailPage() {
                   aria-label={s.completed ? 'Mark incomplete' : 'Mark complete'}
                   onClick={() => {
                     if (!user) return
+                    const updatedSubtasks = chore.subtasks.map((item) =>
+                      item.id === s.id ? { ...item, completed: !item.completed } : item,
+                    )
                     runWrite(
                       chore.id,
                       toggleSubtask(user.uid, chore, s.id),
                       'Could not update subtask',
                     )
+                    getSyncCoordinator(user.uid).enqueueOutboundChore({
+                      ...chore,
+                      subtasks: updatedSubtasks,
+                      updatedAt: new Date().toISOString(),
+                    })
                   }}
                   className={[
                     'focus-ring flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors',

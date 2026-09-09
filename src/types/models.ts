@@ -17,6 +17,8 @@ export interface Subtask {
   parentId?: string | null
   dueAt?: string | null
   isAllDay?: boolean
+  gcalEventId?: string | null
+  gcalLastSyncedAt?: string | null
 }
 
 export interface Chore {

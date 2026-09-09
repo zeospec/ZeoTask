@@ -5,6 +5,7 @@ import {
   deleteTaskFromGCal,
   listAllActiveGCalEvents,
   pullGCalEvents,
+  pushSubtaskToGCal,
   pushTaskToGCal,
   type GCalEvent,
 } from './gcal'
@@ -62,34 +63,34 @@ export async function getValidGCalAccessToken(uid: string): Promise<{
 
   // If expired or expiring soon, attempt background refresh if refreshToken is available
   if (refreshToken) {
-    try {
-      const clientId =
-        (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) ||
-        '395410156315.apps.googleusercontent.com'
-      const res = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          refresh_token: refreshToken,
-          client_id: clientId,
-        }),
-      })
-
-      if (res.ok) {
-        const tokenData = await res.json()
-        const newAccessToken = tokenData.access_token as string
-        const expiresIn = (tokenData.expires_in as number) || 3600
-        const newExpiresAt = Date.now() + expiresIn * 1000
-
-        await saveGCalIntegration(uid, {
-          accessToken: newAccessToken,
-          expiresAt: newExpiresAt,
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
+    if (clientId && clientId.includes('-')) {
+      try {
+        const res = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken,
+            client_id: clientId,
+          }),
         })
-        return { accessToken: newAccessToken, calendarId }
+
+        if (res.ok) {
+          const tokenData = await res.json()
+          const newAccessToken = tokenData.access_token as string
+          const expiresIn = (tokenData.expires_in as number) || 3600
+          const newExpiresAt = Date.now() + expiresIn * 1000
+
+          await saveGCalIntegration(uid, {
+            accessToken: newAccessToken,
+            expiresAt: newExpiresAt,
+          })
+          return { accessToken: newAccessToken, calendarId }
+        }
+      } catch (refreshErr) {
+        console.warn('Silent client token refresh failed:', refreshErr)
       }
-    } catch (refreshErr) {
-      console.warn('Silent token refresh failed:', refreshErr)
     }
   }
 
@@ -210,6 +211,23 @@ export class SyncCoordinator {
    */
   private async pushSingleChore(chore: Chore): Promise<void> {
     try {
+      // If task was archived/completed or due date was cleared, remove from Google Calendar
+      if (!chore.dueAt || chore.archivedAt) {
+        if (chore.gcalEventId) {
+          await this.handleDeleteChore(chore.gcalEventId)
+          await updateChore(
+            this.uid,
+            chore.id,
+            {
+              gcalEventId: null,
+              gcalLastSyncedAt: new Date().toISOString(),
+            },
+            chore,
+          )
+        }
+        return
+      }
+
       const auth = await getValidGCalAccessToken(this.uid)
       if (!auth) return
 
@@ -220,6 +238,7 @@ export class SyncCoordinator {
       )
 
       // Record gcalEventId and synced timestamp back to Firestore chore if changed
+      let currentChore = chore
       if (chore.gcalEventId !== gcalEventId || chore.gcalLastSyncedAt !== updated) {
         await updateChore(
           this.uid,
@@ -230,6 +249,45 @@ export class SyncCoordinator {
           },
           chore,
         )
+        currentChore = { ...chore, gcalEventId, gcalLastSyncedAt: updated }
+      }
+
+      // Sync subtasks with deadlines to Google Calendar
+      if (currentChore.subtasks && currentChore.subtasks.length > 0) {
+        let subtasksModified = false
+        const nextSubtasks = [...currentChore.subtasks]
+
+        for (let i = 0; i < nextSubtasks.length; i++) {
+          const s = nextSubtasks[i]
+          if (s.dueAt && !s.completed && !currentChore.archivedAt) {
+            try {
+              const res = await pushSubtaskToGCal(s, currentChore, auth.calendarId, auth.accessToken)
+              if (s.gcalEventId !== res.gcalEventId || s.gcalLastSyncedAt !== res.updated) {
+                nextSubtasks[i] = {
+                  ...s,
+                  gcalEventId: res.gcalEventId,
+                  gcalLastSyncedAt: res.updated,
+                }
+                subtasksModified = true
+              }
+            } catch (sErr) {
+              console.warn(`Failed outbound push for subtask ${s.id}:`, sErr)
+            }
+          } else if (s.gcalEventId && (s.completed || !s.dueAt || currentChore.archivedAt)) {
+            // Subtask was completed, due date removed, or parent archived
+            await this.handleDeleteChore(s.gcalEventId)
+            nextSubtasks[i] = {
+              ...s,
+              gcalEventId: null,
+              gcalLastSyncedAt: new Date().toISOString(),
+            }
+            subtasksModified = true
+          }
+        }
+
+        if (subtasksModified) {
+          await updateChore(this.uid, currentChore.id, { subtasks: nextSubtasks }, currentChore)
+        }
       }
     } catch (err) {
       console.warn(`Failed outbound push for chore ${chore.id}:`, err)
@@ -314,6 +372,17 @@ export class SyncCoordinator {
         await this.processRemoteEvent(event, auth.calendarId, auth.accessToken, localChores)
       }
 
+      // Initial Setup & Parity: If first-time connection or manual sync, push all active tasks with due dates to GCal
+      const isInitialOrManual =
+        reason.includes('initial') || reason.includes('manual') || !integration?.lastSyncedAt
+      if (isInitialOrManual) {
+        for (const chore of localChores) {
+          if (!chore.archivedAt && chore.dueAt && !chore.gcalEventId) {
+            await this.pushSingleChore(chore)
+          }
+        }
+      }
+
       // Update syncToken bookmark and lastSyncedAt
       await saveGCalIntegration(this.uid, {
         syncToken: nextSyncToken || syncToken,
@@ -348,13 +417,58 @@ export class SyncCoordinator {
       if (matchingChore) {
         await this.recordTombstone(event.id)
         await deleteChore(this.uid, matchingChore.id)
+        return
+      }
+
+      // Check if cancelled event belonged to a subtask
+      for (const c of localChores) {
+        const sIdx = c.subtasks?.findIndex((s) => s.gcalEventId === event.id)
+        if (sIdx !== undefined && sIdx >= 0) {
+          await this.recordTombstone(event.id)
+          const nextSubtasks = [...c.subtasks]
+          nextSubtasks[sIdx] = { ...nextSubtasks[sIdx], completed: true, gcalEventId: null }
+          await updateChore(this.uid, c.id, { subtasks: nextSubtasks }, c)
+          return
+        }
       }
       return
     }
 
-    // 3. Active event matching
+    // 3. Subtask event matching
     const zeoTaskId = event.extendedProperties?.private?.zeoTaskId
+    const zeoSubtaskId = event.extendedProperties?.private?.zeoSubtaskId
     const zeoTaskUpdatedAt = event.extendedProperties?.private?.zeoTaskUpdatedAt
+
+    if (zeoSubtaskId) {
+      const parentChore = localChores.find(
+        (c) =>
+          (zeoTaskId && c.id === zeoTaskId) ||
+          c.subtasks?.some((s) => s.id === zeoSubtaskId || s.gcalEventId === event.id),
+      )
+      if (parentChore && parentChore.subtasks) {
+        const subIndex = parentChore.subtasks.findIndex(
+          (s) => s.id === zeoSubtaskId || s.gcalEventId === event.id,
+        )
+        if (subIndex >= 0) {
+          const s = parentChore.subtasks[subIndex]
+          const isAllDay = Boolean(event.start.date && !event.start.dateTime)
+          const dueAt = event.start.date || event.start.dateTime || null
+          const nextSubtasks = [...parentChore.subtasks]
+          nextSubtasks[subIndex] = {
+            ...s,
+            dueAt,
+            isAllDay,
+            gcalEventId: event.id,
+            gcalLastSyncedAt: event.updated || new Date().toISOString(),
+          }
+          await updateChore(this.uid, parentChore.id, { subtasks: nextSubtasks }, parentChore)
+          return
+        }
+      }
+      return
+    }
+
+    // 4. Parent chore active event matching
     const matchingChore = localChores.find(
       (c) => (zeoTaskId && c.id === zeoTaskId) || c.gcalEventId === event.id,
     )
@@ -447,6 +561,13 @@ export class SyncCoordinator {
       // 2. Process all active events
       for (const event of activeEvents) {
         await this.processRemoteEvent(event, calendarId, accessToken, localChores)
+      }
+
+      // 3. Ensure all active chores with due dates exist in Google Calendar
+      for (const chore of localChores) {
+        if (!chore.archivedAt && chore.dueAt && (!chore.gcalEventId || !activeGCalIds.has(chore.gcalEventId))) {
+          await this.pushSingleChore(chore)
+        }
       }
 
       await saveGCalIntegration(this.uid, {

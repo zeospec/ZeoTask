@@ -480,7 +480,12 @@ export const gcalExchangeCode = onCall(async (request) => {
       redirectUri,
     )
 
-    const calendarId = await ensureBackendZeoTaskCalendar(accessToken)
+    const existingSnap = await db.doc(`users/${uid}/integrations/googleCalendar`).get()
+    const existingData = existingSnap.data() as GCalIntegrationData | undefined
+    let calendarId = existingData?.calendarId
+    if (!calendarId) {
+      calendarId = await ensureBackendZeoTaskCalendar(accessToken)
+    }
     const now = Date.now()
     const docData: GCalIntegrationData = {
       enabled: true,
@@ -491,7 +496,7 @@ export const gcalExchangeCode = onCall(async (request) => {
       expiresAt: now + expiresIn * 1000,
       syncToken: null,
       tombstones: [],
-      lastSyncedAt: new Date().toISOString(),
+      lastSyncedAt: null,
     }
 
     await db.doc(`users/${uid}/integrations/googleCalendar`).set(docData, { merge: true })

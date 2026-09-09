@@ -61,11 +61,10 @@ export function ProfilePage() {
       // 1. Preferred: Google Identity Services (GIS) initCodeClient for permanent refresh token
       const googleOAuth = (window as unknown as { google?: { accounts?: { oauth2?: any } } })
         .google?.accounts?.oauth2
-      const clientId =
-        (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) ||
-        '395410156315.apps.googleusercontent.com'
+      const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
 
-      if (googleOAuth && clientId) {
+      // Only attempt GIS code flow if a valid OAuth Web Client ID is configured
+      if (googleOAuth && clientId && clientId.includes('-')) {
         try {
           const authCode = await new Promise<string>((resolve, reject) => {
             const client = googleOAuth.initCodeClient({
@@ -90,24 +89,43 @@ export function ProfilePage() {
           if (exchangeRes.data?.success) {
             const updated = await getGCalIntegration(user.uid)
             setGcalDoc(updated)
-            setGcalMsg("Connected to 'ZeoTask' Google Calendar with permanent auto-refresh!")
+            const coordinator = getSyncCoordinator(user.uid)
+            await coordinator.triggerSync('initial-connect', chores)
+            setGcalMsg("Connected! All active tasks synced to 'ZeoTask' Google Calendar.")
             return
           }
-        } catch (gisErr) {
+        } catch (gisErr: any) {
+          if (
+            gisErr?.message?.includes('popup_closed') ||
+            gisErr?.message?.includes('access_denied')
+          ) {
+            setGcalMsg('Sign-in cancelled')
+            return
+          }
           console.warn('Permanent code exchange failed or skipped; trying popup fallback:', gisErr)
         }
       }
 
-      // 2. Fallback: Firebase signInWithPopup
+      // 2. Fallback: Firebase signInWithPopup (uses Firebase verified OAuth credentials)
       const provider = new GoogleAuthProvider()
       provider.addScope('https://www.googleapis.com/auth/calendar')
-      provider.setCustomParameters({ prompt: 'consent', access_type: 'offline' })
+      const customParams: Record<string, string> = {
+        prompt: 'consent',
+        access_type: 'offline',
+      }
+      if (user.email) {
+        customParams.login_hint = user.email
+      }
+      provider.setCustomParameters(customParams)
       const res = await signInWithPopup(getFirebaseAuth(), provider)
       const cred = GoogleAuthProvider.credentialFromResult(res)
       const token = cred?.accessToken
       if (!token) throw new Error('Could not obtain Google Calendar authorization')
 
-      const calId = await ensureZeoTaskCalendar(token)
+      let calId = gcalDoc?.calendarId
+      if (!calId) {
+        calId = await ensureZeoTaskCalendar(token)
+      }
       const now = Date.now()
       const docData: GCalIntegrationDoc = {
         enabled: true,
@@ -115,7 +133,7 @@ export function ProfilePage() {
         calendarName: 'ZeoTask',
         accessToken: token,
         expiresAt: now + 3500 * 1000,
-        lastSyncedAt: new Date().toISOString(),
+        lastSyncedAt: null,
       }
 
       await saveGCalIntegration(user.uid, docData)
@@ -123,7 +141,7 @@ export function ProfilePage() {
 
       const coordinator = getSyncCoordinator(user.uid)
       await coordinator.triggerSync('initial-connect', chores)
-      setGcalMsg("Connected to 'ZeoTask' Google Calendar successfully!")
+      setGcalMsg("Connected! All active tasks synced to 'ZeoTask' Google Calendar.")
     } catch (err) {
       console.error('GCal connect error:', err)
       setGcalMsg(err instanceof Error ? err.message : 'Could not connect Google Calendar')

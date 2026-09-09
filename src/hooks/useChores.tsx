@@ -231,7 +231,19 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       undoRef.current.set(chore.id, snapshot)
       runWrite(chore.id, promise, 'Could not complete task')
 
-      getSyncCoordinator(user.uid).enqueueOutboundChore(chore)
+      const coordinator = getSyncCoordinator(user.uid)
+      if (nextDue) {
+        // Recurring chore: update Google Calendar event with the new nextDue date
+        coordinator.enqueueOutboundChore({
+          ...chore,
+          dueAt: nextDue,
+          archivedAt: null,
+          updatedAt: new Date().toISOString(),
+        })
+      } else if (chore.gcalEventId) {
+        // Non-recurring chore: task is completed/archived, delete event from Google Calendar
+        void coordinator.handleDeleteChore(chore.gcalEventId)
+      }
 
       const title = chore.title
       announceLive(`Completed ${title}`)
@@ -247,6 +259,15 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
             'Could not undo',
           )
           announceLive(`Undid complete for ${title}`)
+
+          // Restore to Google Calendar if uncompleted task has a due date
+          if (snap.dueAt && !snap.archivedAt) {
+            getSyncCoordinator(user.uid).enqueueOutboundChore({
+              ...chore,
+              ...snap,
+              updatedAt: new Date().toISOString(),
+            })
+          }
         },
       })
       void nextDue
@@ -312,6 +333,13 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
         }
         const parent = chores.find((c) => c.id === choreId)
         runWrite(choreId, updateChoreWrite(user.uid, choreId, patch, parent), 'Could not move task')
+        if (parent) {
+          getSyncCoordinator(user.uid).enqueueOutboundChore({
+            ...parent,
+            ...patch,
+            updatedAt: new Date().toISOString(),
+          })
+        }
       }
 
       // Apply remaining subtask-only updates to parent chores
@@ -326,6 +354,11 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
             updateChoreWrite(user.uid, parentChoreId, { subtasks: nextSubtasks }),
             'Could not move checklist items',
           )
+          getSyncCoordinator(user.uid).enqueueOutboundChore({
+            ...parent,
+            subtasks: nextSubtasks,
+            updatedAt: new Date().toISOString(),
+          })
         }
       }
 
@@ -359,6 +392,12 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
         'Could not complete checklist item',
       )
 
+      getSyncCoordinator(user.uid).enqueueOutboundChore({
+        ...parent,
+        subtasks: nextSubtasks,
+        updatedAt: new Date().toISOString(),
+      })
+
       announceLive(`Completed ${sub.title}`)
       pushToast('Checklist item marked complete', {
         label: 'Undo',
@@ -369,6 +408,11 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
             updateChoreWrite(user.uid, parentChoreId, { subtasks: prevSubtasks }),
             'Could not undo',
           )
+          getSyncCoordinator(user.uid).enqueueOutboundChore({
+            ...parent,
+            subtasks: prevSubtasks,
+            updatedAt: new Date().toISOString(),
+          })
           announceLive(`Undid complete for ${sub.title}`)
         },
       })
@@ -391,6 +435,11 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
         updateChoreWrite(user.uid, parentChoreId, { subtasks: nextSubtasks }),
         'Could not update checklist item',
       )
+      getSyncCoordinator(user.uid).enqueueOutboundChore({
+        ...parent,
+        subtasks: nextSubtasks,
+        updatedAt: new Date().toISOString(),
+      })
       announceLive('Checklist item updated')
     },
     [announceLive, chores, runWrite, user],
@@ -402,6 +451,11 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       const parent = chores.find((c) => c.id === parentChoreId)
       if (!parent) return
 
+      const sub = parent.subtasks.find((s) => s.id === subtaskId)
+      if (sub?.gcalEventId) {
+        void getSyncCoordinator(user.uid).handleDeleteChore(sub.gcalEventId)
+      }
+
       const nextSubtasks = parent.subtasks.filter((s) => s.id !== subtaskId)
 
       runWrite(
@@ -409,6 +463,11 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
         updateChoreWrite(user.uid, parentChoreId, { subtasks: nextSubtasks }),
         'Could not delete checklist item',
       )
+      getSyncCoordinator(user.uid).enqueueOutboundChore({
+        ...parent,
+        subtasks: nextSubtasks,
+        updatedAt: new Date().toISOString(),
+      })
       announceLive('Checklist item removed')
     },
     [announceLive, chores, runWrite, user],

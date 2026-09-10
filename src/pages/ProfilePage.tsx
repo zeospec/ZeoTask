@@ -9,13 +9,14 @@ import {
   getNotificationSettings,
   saveNotificationSettings,
 } from '../lib/chores'
-import { collection, getDocs, query, where } from 'firebase/firestore'
+import { collection, doc, getDocs, onSnapshot, query, where } from 'firebase/firestore'
 import { isFirebaseConfigured, getDb, getFirebaseAuth, getFirebaseFunctions, getVapidKey } from '../lib/firebase'
 import { httpsCallable } from 'firebase/functions'
 import { ensureZeoTaskCalendar } from '../lib/gcal'
 import {
   getGCalIntegration,
   saveGCalIntegration,
+  getValidGCalAccessToken,
   getSyncCoordinator,
 } from '../lib/syncCoordinator'
 import {
@@ -51,8 +52,53 @@ export function ProfilePage() {
   useEffect(() => {
     if (!user) return
     void getNotificationSettings(user.uid).then(setNotif)
-    void getGCalIntegration(user.uid).then(setGcalDoc)
+
+    // Real-time subscription to Google Calendar integration document
+    const unsubscribe = onSnapshot(
+      doc(getDb(), 'users', user.uid, 'integrations', 'googleCalendar'),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as GCalIntegrationDoc
+          setGcalDoc(data)
+
+          // Proactive Self-Healing: If integration is enabled but marked as expired or needing reauth,
+          // automatically attempt a silent background refresh pass!
+          const isStale =
+            Boolean(data.needsReauth) ||
+            Boolean(data.expiresAt && data.expiresAt <= Date.now())
+
+          if (data.enabled && isStale) {
+            void getValidGCalAccessToken(user.uid, true).then((res) => {
+              if (res) {
+                console.log('Successfully self-healed Google Calendar authorization in background.')
+              }
+            })
+          }
+        } else {
+          setGcalDoc(null)
+        }
+      },
+      (err) => {
+        console.error('Failed to subscribe to GCal integration doc:', err)
+      },
+    )
+
+    return () => unsubscribe()
   }, [user])
+
+  async function waitForGoogleOAuth(timeoutMs = 2500): Promise<any> {
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      const oauth2 = (window as unknown as { google?: { accounts?: { oauth2?: any } } })
+        .google?.accounts?.oauth2
+      if (oauth2) return oauth2
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    return (
+      (window as unknown as { google?: { accounts?: { oauth2?: any } } }).google?.accounts
+        ?.oauth2 || null
+    )
+  }
 
   async function onConnectGCal() {
     if (!user) return
@@ -60,9 +106,8 @@ export function ProfilePage() {
     setGcalMsg(null)
     try {
       // 1. Preferred: Google Identity Services (GIS) initCodeClient for permanent refresh token
-      const googleOAuth = (window as unknown as { google?: { accounts?: { oauth2?: any } } })
-        .google?.accounts?.oauth2
       const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
+      const googleOAuth = await waitForGoogleOAuth(2000)
 
       // Only attempt GIS code flow if a valid OAuth Web Client ID is configured
       if (googleOAuth && clientId && clientId.includes('-')) {
@@ -93,8 +138,6 @@ export function ProfilePage() {
               needsReauth: false,
               lastAuthError: null,
             })
-            const updated = await getGCalIntegration(user.uid)
-            setGcalDoc(updated)
             const coordinator = getSyncCoordinator(user.uid)
             await coordinator.triggerSync('initial-connect', chores)
             setGcalMsg("Connected! All active tasks synced to 'ZeoTask' Google Calendar.")
@@ -140,6 +183,7 @@ export function ProfilePage() {
         calendarId: calId,
         calendarName: 'ZeoTask',
         accessToken: token,
+        refreshToken: gcalDoc?.refreshToken, // Preserve existing refresh token!
         expiresAt: now + 3500 * 1000,
         lastSyncedAt: gcalDoc?.lastSyncedAt ?? null,
         completedTaskBehavior: gcalDoc?.completedTaskBehavior ?? 'keep',
@@ -168,8 +212,12 @@ export function ProfilePage() {
       Boolean(gcalDoc?.expiresAt && gcalDoc.expiresAt <= Date.now() && !gcalDoc.refreshToken)
 
     if (isExpired) {
-      await onConnectGCal()
-      return
+      // First try silent self-healing refresh via Cloud Functions
+      const refreshed = await getValidGCalAccessToken(user.uid, true)
+      if (!refreshed) {
+        await onConnectGCal()
+        return
+      }
     }
 
     setGcalBusy(true)
@@ -323,12 +371,6 @@ export function ProfilePage() {
 
   return (
     <div className="space-y-5 pb-8">
-      <Link
-        to="/"
-        className="inline-flex min-h-11 items-center text-sm text-[var(--muted)] hover:text-[var(--accent)]"
-      >
-        ← Tasks
-      </Link>
 
       <div className="rounded-[var(--radius-modal)] border border-[var(--hairline)] bg-[var(--surface)] p-5">
         <div className="flex items-center gap-4">

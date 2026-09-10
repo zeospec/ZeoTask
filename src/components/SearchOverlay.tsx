@@ -3,6 +3,7 @@ import { Search } from './icons'
 import { useChores } from '../hooks/useChores'
 import { useLabels } from '../hooks/useLabels'
 import { formatDueDisplay } from '../lib/scheduler'
+import { useModalBack } from '../hooks/useModalBack'
 import type { Chore } from '../types/models'
 
 type Props = {
@@ -12,6 +13,8 @@ type Props = {
 }
 
 export function SearchOverlay({ open, onClose, onSelect }: Props) {
+  useModalBack(open, onClose, 'search-overlay')
+
   const { chores } = useChores()
   const { byId } = useLabels()
   const [q, setQ] = useState('')
@@ -62,7 +65,14 @@ export function SearchOverlay({ open, onClose, onSelect }: Props) {
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-start justify-center bg-[var(--ink)]/30 p-4 pt-[12vh]">
+    <div
+      className="fixed inset-0 z-[70] flex items-start justify-center bg-[var(--ink)]/30 p-4 pt-[12vh]"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose()
+        }
+      }}
+    >
       <button
         type="button"
         className="absolute inset-0"

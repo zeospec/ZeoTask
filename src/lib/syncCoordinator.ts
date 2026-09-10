@@ -44,9 +44,13 @@ export async function saveGCalIntegration(
 
 /**
  * Checks token expiry and returns a valid access token.
- * Refreshes silently using refreshToken if expired or expiring within 5 minutes.
+ * Proactively refreshes via Cloud Functions when expired, expiring within 10 minutes,
+ * or when forceRefresh is requested. Automatically self-heals if previously flagged.
  */
-export async function getValidGCalAccessToken(uid: string): Promise<{
+export async function getValidGCalAccessToken(
+  uid: string,
+  forceRefresh: boolean = false,
+): Promise<{
   accessToken: string
   calendarId: string
 } | null> {
@@ -55,85 +59,45 @@ export async function getValidGCalAccessToken(uid: string): Promise<{
     return null
   }
 
-  // If already flagged as requiring re-authorization, do not spam requests
-  if (integration.needsReauth) {
-    return null
-  }
-
-  const { accessToken, refreshToken, expiresAt, calendarId } = integration
+  const { accessToken, expiresAt, calendarId, needsReauth } = integration
   const now = Date.now()
 
-  // If token is still valid (>15 minutes remaining), return it directly
-  if (accessToken && expiresAt && expiresAt > now + 15 * 60 * 1000) {
+  // If token is still valid (> 10 minutes remaining), not forced, and not flagged for reauth, return it directly
+  if (!forceRefresh && !needsReauth && accessToken && expiresAt && expiresAt > now + 10 * 60 * 1000) {
     return { accessToken, calendarId }
   }
 
-  // If expired or expiring soon, attempt background refresh if refreshToken is available
-  if (refreshToken) {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
-    if (clientId && clientId.includes('-')) {
-      try {
-        const res = await fetch('https://oauth2.googleapis.com/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            grant_type: 'refresh_token',
-            refresh_token: refreshToken,
-            client_id: clientId,
-          }),
-        })
-
-        if (res.ok) {
-          const tokenData = await res.json()
-          const newAccessToken = tokenData.access_token as string
-          const expiresIn = (tokenData.expires_in as number) || 3600
-          const newExpiresAt = Date.now() + expiresIn * 1000
-
-          await saveGCalIntegration(uid, {
-            accessToken: newAccessToken,
-            expiresAt: newExpiresAt,
-            needsReauth: false,
-            lastAuthError: null,
-          })
-          return { accessToken: newAccessToken, calendarId }
-        }
-      } catch (refreshErr) {
-        console.warn('Silent client token refresh failed:', refreshErr)
-      }
-    }
-  }
-
-  // Attempt Cloud Function backend token refresh if available
+  // Attempt backend token refresh via Cloud Functions (which securely holds client_id & client_secret)
   try {
-    const refreshCallable = httpsCallable<unknown, { accessToken?: string }>(
+    const refreshCallable = httpsCallable<{ forceRefresh?: boolean }, { accessToken?: string }>(
       getFirebaseFunctions(),
       'gcalRefreshToken',
     )
-    const res = await refreshCallable()
+    const res = await refreshCallable({ forceRefresh: forceRefresh || Boolean(needsReauth) })
     if (res.data?.accessToken) {
+      const newExpiresAt = Date.now() + 3500 * 1000
       await saveGCalIntegration(uid, {
+        accessToken: res.data.accessToken,
+        expiresAt: newExpiresAt,
         needsReauth: false,
         lastAuthError: null,
       })
       return { accessToken: res.data.accessToken, calendarId }
     }
-  } catch {
-    // Cloud function not reachable (e.g. offline) or credentials not configured
+  } catch (refreshErr: any) {
+    console.warn('Backend token refresh failed:', refreshErr)
+    // ONLY flag needsReauth if Google's OAuth endpoint explicitly returned invalid_grant
+    if (refreshErr?.message?.includes('invalid_grant')) {
+      await saveGCalIntegration(uid, {
+        needsReauth: true,
+        lastAuthError: 'REVOKED',
+      })
+      return null
+    }
   }
 
-  // If token has expired and cannot be refreshed, DO NOT return the dead token!
-  // Mark re-authorization required and return null.
-  if (expiresAt && now >= expiresAt) {
-    console.warn('Google Calendar token has expired; re-authorization required.')
-    await saveGCalIntegration(uid, {
-      needsReauth: true,
-      lastAuthError: 'EXPIRED',
-    })
-    return null
-  }
-
-  // If accessToken exists and has not yet expired (e.g. within 15m buffer), use it
-  if (accessToken && (!expiresAt || expiresAt > now)) {
+  // If backend refresh was unavailable (e.g. temporary offline), but current access token is not expired, use it
+  if (accessToken && (!expiresAt || expiresAt > now) && !needsReauth) {
     return { accessToken, calendarId }
   }
 
@@ -241,9 +205,9 @@ export class SyncCoordinator {
   /**
    * Pushes a single chore to Google Calendar.
    */
-  private async pushSingleChore(chore: Chore): Promise<void> {
+  private async pushSingleChore(chore: Chore, retryCount = 0): Promise<void> {
     try {
-      const auth = await getValidGCalAccessToken(this.uid)
+      const auth = await getValidGCalAccessToken(this.uid, retryCount > 0)
       if (!auth) return
 
       const integration = await getGCalIntegration(this.uid)
@@ -378,12 +342,9 @@ export class SyncCoordinator {
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (msg === 'UNAUTHORIZED' || msg.includes('401')) {
-        await saveGCalIntegration(this.uid, {
-          needsReauth: true,
-          lastAuthError: 'UNAUTHORIZED',
-        })
-        return
+      if (retryCount === 0 && (msg === 'UNAUTHORIZED' || msg.includes('401'))) {
+        console.warn(`401 on outbound push for chore ${chore.id}. Forcing token refresh and retrying once...`)
+        return this.pushSingleChore(chore, 1)
       }
       console.warn(`Failed outbound push for chore ${chore.id}:`, err)
     }
@@ -398,9 +359,9 @@ export class SyncCoordinator {
    *   - Non-recurring: deletes existing GCal event.
    *   - Recurring: moves existing GCal event to nextDue date.
    */
-  async handleCompleteChore(chore: Chore, nextDue: string | null): Promise<void> {
+  async handleCompleteChore(chore: Chore, nextDue: string | null = null, retryCount = 0): Promise<void> {
     try {
-      const auth = await getValidGCalAccessToken(this.uid)
+      const auth = await getValidGCalAccessToken(this.uid, retryCount > 0)
       if (!auth) return
 
       const integration = await getGCalIntegration(this.uid)
@@ -476,12 +437,9 @@ export class SyncCoordinator {
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (msg === 'UNAUTHORIZED' || msg.includes('401')) {
-        await saveGCalIntegration(this.uid, {
-          needsReauth: true,
-          lastAuthError: 'UNAUTHORIZED',
-        })
-        return
+      if (retryCount === 0 && (msg === 'UNAUTHORIZED' || msg.includes('401'))) {
+        console.warn(`401 on handleCompleteChore for ${chore.id}. Forcing token refresh and retrying once...`)
+        return this.handleCompleteChore(chore, nextDue, 1)
       }
       console.warn(`Failed handleCompleteChore for ${chore.id}:`, err)
     }
@@ -566,7 +524,7 @@ export class SyncCoordinator {
    * 2. Pulls delta changes or runs full reconciliation.
    * 3. Resolves conflicts using causal timestamps & anti-echo check.
    */
-  private async executeFullPass(reason: string, localChores: Chore[]): Promise<void> {
+  private async executeFullPass(reason: string, localChores: Chore[], retryCount = 0): Promise<void> {
     await this.loadTombstones()
 
     // 1. Flush local outbound mutations before reading from Google Calendar
@@ -577,7 +535,7 @@ export class SyncCoordinator {
     }
     const effectiveChores = this.cachedChores.length > 0 ? this.cachedChores : localChores
 
-    const auth = await getValidGCalAccessToken(this.uid)
+    const auth = await getValidGCalAccessToken(this.uid, retryCount > 0)
     if (!auth) return
 
     const integration = await getGCalIntegration(this.uid)
@@ -618,16 +576,14 @@ export class SyncCoordinator {
       await saveGCalIntegration(this.uid, {
         syncToken: nextSyncToken || syncToken,
         lastSyncedAt: new Date().toISOString(),
+        needsReauth: false,
+        lastAuthError: null,
       })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (msg === 'UNAUTHORIZED' || msg.includes('401')) {
-        console.warn('Google Calendar sync returned 401 UNAUTHORIZED. Marking integration for re-authorization.')
-        await saveGCalIntegration(this.uid, {
-          needsReauth: true,
-          lastAuthError: 'UNAUTHORIZED',
-        })
-        return
+      if (retryCount === 0 && (msg === 'UNAUTHORIZED' || msg.includes('401'))) {
+        console.warn(`Sync pass returned 401 UNAUTHORIZED (${reason}). Forcing token refresh and retrying once...`)
+        return this.executeFullPass(reason, localChores, 1)
       }
       console.warn(`Sync pass failed (${reason}):`, err)
     }
@@ -882,6 +838,8 @@ export class SyncCoordinator {
 
       await saveGCalIntegration(this.uid, {
         lastSyncedAt: new Date().toISOString(),
+        needsReauth: false,
+        lastAuthError: null,
       })
     } catch (err) {
       console.warn('Full reconciliation pass failed:', err)

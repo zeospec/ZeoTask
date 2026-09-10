@@ -15,6 +15,8 @@ export interface GCalIntegrationData {
   lastSyncedAt?: string | null
   tombstones?: string[]
   completedTaskBehavior?: 'keep' | 'remove'
+  needsReauth?: boolean
+  lastAuthError?: string | null
 }
 
 export interface SubtaskData {
@@ -167,32 +169,42 @@ export async function getValidBackendToken(
   integration: GCalIntegrationData,
   clientId?: string,
   clientSecret?: string,
+  forceRefresh: boolean = false,
 ): Promise<string | null> {
   const now = Date.now()
   const { accessToken, refreshToken, expiresAt } = integration
 
-  // If token is valid (> 15 minutes remaining), return it directly.
+  // If token is valid (> 15 minutes remaining) and not forceRefresh, return it directly.
   // 15-minute buffer guarantees two scheduler tick opportunities to renew before expiry.
-  if (accessToken && expiresAt && expiresAt > now + 15 * 60 * 1000) {
+  if (!forceRefresh && accessToken && expiresAt && expiresAt > now + 15 * 60 * 1000) {
     return accessToken
   }
 
   // If we have a refresh token and OAuth credentials, refresh silently in the background
   if (refreshToken && clientId && clientSecret) {
     try {
-      logger.info('Proactive token auto-refresh executing for user', { uid })
+      logger.info('Proactive token auto-refresh executing for user', { uid, forceRefresh })
       const renewed = await refreshGoogleToken(clientId, clientSecret, refreshToken)
       const newExpiresAt = now + renewed.expiresIn * 1000
 
       await db.doc(`users/${uid}/integrations/googleCalendar`).update({
         accessToken: renewed.accessToken,
         expiresAt: newExpiresAt,
+        needsReauth: false,
+        lastAuthError: null,
         updatedAt: new Date().toISOString(),
       })
 
       return renewed.accessToken
-    } catch (err) {
+    } catch (err: any) {
       logger.warn('Background token refresh failed:', err)
+      if (err?.message?.includes('invalid_grant')) {
+        await db.doc(`users/${uid}/integrations/googleCalendar`).update({
+          needsReauth: true,
+          lastAuthError: 'REVOKED',
+          updatedAt: new Date().toISOString(),
+        })
+      }
     }
   }
 
@@ -475,7 +487,7 @@ export async function syncGCalForUser(
 ): Promise<void> {
   if (!integration.enabled || !integration.calendarId) return
 
-  const token = await getValidBackendToken(db, uid, integration, clientId, clientSecret)
+  let token = await getValidBackendToken(db, uid, integration, clientId, clientSecret)
   if (!token) return
 
   const calendarId = integration.calendarId
@@ -492,6 +504,14 @@ export async function syncGCalForUser(
   }
 
   let pullRes = await fetch(pullUrl, { headers: authHeaders(token) })
+  if (pullRes.status === 401) {
+    logger.info('Received 401 on pull, forcing token refresh...', { uid })
+    const freshToken = await getValidBackendToken(db, uid, integration, clientId, clientSecret, true)
+    if (freshToken) {
+      token = freshToken
+      pullRes = await fetch(pullUrl, { headers: authHeaders(token) })
+    }
+  }
   let nextSyncToken: string | null = null
   let events: any[] = []
 
@@ -885,5 +905,7 @@ export async function syncGCalForUser(
     syncToken: nextSyncToken || syncToken,
     tombstones: tombstoneArray,
     lastSyncedAt: nowIso,
+    needsReauth: false,
+    lastAuthError: null,
   })
 }

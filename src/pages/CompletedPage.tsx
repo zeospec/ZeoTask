@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useOutletContext } from 'react-router-dom'
+import { useOutletContext } from 'react-router-dom'
 import { format, parseISO, isBefore, startOfDay } from 'date-fns'
 import { useAuth } from '../hooks/useAuth'
 import { useChores } from '../hooks/useChores'
@@ -47,13 +47,6 @@ export function CompletedPage() {
 
   return (
     <div className="space-y-5 pb-8">
-      <Link
-        to="/"
-        className="inline-flex min-h-11 items-center text-sm text-[var(--muted)] hover:text-[var(--accent)]"
-      >
-        ← Tasks
-      </Link>
-
       <div>
         <p className="font-mono-meta text-xs uppercase tracking-widest text-[var(--muted)]">
           Archive

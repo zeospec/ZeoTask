@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Filter, X, Check } from './icons'
 import { useLabels } from '../hooks/useLabels'
 import { useViews } from '../hooks/useViews'
+import { useClickOutside } from '../hooks/useClickOutside'
+import { useModalBack } from '../hooks/useModalBack'
 import type { Priority } from '../types/models'
 
 export type FilterState = {
@@ -22,6 +24,24 @@ export function FilterMenu({ activeFilter, onChange }: Props) {
   const [open, setOpen] = useState(false)
   const [draftName, setDraftName] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useClickOutside([buttonRef, menuRef], () => setOpen(false), open)
+  useModalBack(open, () => setOpen(false), 'filter-menu')
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
 
   // Local state for the popover (ad-hoc filtering)
   const [localPriorities, setLocalPriorities] = useState<Priority[]>([])
@@ -81,6 +101,7 @@ export function FilterMenu({ activeFilter, onChange }: Props) {
   return (
     <div className="relative flex items-center">
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={[
@@ -102,7 +123,10 @@ export function FilterMenu({ activeFilter, onChange }: Props) {
             aria-label="Close menu"
             onClick={() => setOpen(false)}
           />
-          <div className="fixed top-16 left-4 right-4 z-50 flex max-h-[70vh] flex-col overflow-hidden rounded-[var(--radius-control)] border border-[var(--hairline)] bg-[var(--surface)] py-2 shadow-xl sm:absolute sm:top-full sm:left-auto sm:right-0 sm:mt-2 sm:w-72 sm:shadow-[var(--shadow-card)]">
+          <div
+            ref={menuRef}
+            className="fixed top-16 left-4 right-4 z-50 flex max-h-[70vh] flex-col overflow-hidden rounded-[var(--radius-control)] border border-[var(--hairline)] bg-[var(--surface)] py-2 shadow-xl sm:absolute sm:top-full sm:left-auto sm:right-0 sm:mt-2 sm:w-72 sm:shadow-[var(--shadow-card)]"
+          >
             
             {views.length > 0 && (
               <div className="mb-2">

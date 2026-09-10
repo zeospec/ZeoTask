@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { CreateTaskModal } from './CreateTaskModal'
-import { Search, ZeoMark, CalendarIcon, ListIcon, X } from './icons'
+import { Search, ZeoMark, CalendarIcon, ListIcon, X, ArrowLeft } from './icons'
 import { LiveAnnouncer, ToastStack } from './ToastStack'
 import { SearchOverlay } from './SearchOverlay'
 import { FilterMenu, type FilterState } from './FilterMenu'
@@ -11,6 +11,8 @@ import { useChores } from '../hooks/useChores'
 import { usePwa } from '../hooks/usePwa'
 import { useProjects } from '../hooks/useProjects'
 import { useLabels } from '../hooks/useLabels'
+import { usePwaExitGuard } from '../hooks/usePwaExitGuard'
+import { useClickOutside } from '../hooks/useClickOutside'
 import { notificationPermission, enablePushNotifications } from '../lib/push'
 import { Sidebar } from './Sidebar'
 import { InlineQuickAdd } from './InlineQuickAdd'
@@ -61,12 +63,38 @@ export type CreateOverrides = {
 
 export function AppShell() {
   const { user, logout } = useAuth()
-  const { syncing } = useChores()
+  const { syncing, pushToast } = useChores()
+  usePwaExitGuard({ pushToast })
   const { projects } = useProjects()
   const { labels } = useLabels()
   const [searchParams] = useSearchParams()
-  const activeProjectId = searchParams.get('project')
-  const activeLabelId = searchParams.get('label')
+  const projectParam = searchParams.get('project')
+  const labelParam = searchParams.get('label')
+
+  const activeProject = useMemo(() => {
+    if (!projectParam) return null
+    const decoded = decodeURIComponent(projectParam).trim().toLowerCase()
+    return (
+      projects.find((p) => p.name.trim().toLowerCase() === decoded) ||
+      projects.find((p) => p.id === projectParam) ||
+      null
+    )
+  }, [projects, projectParam])
+
+  const activeProjectId = activeProject?.id || null
+
+  const activeLabel = useMemo(() => {
+    if (!labelParam) return null
+    const decoded = decodeURIComponent(labelParam).trim().toLowerCase()
+    return (
+      labels.find((l) => l.name.trim().toLowerCase() === decoded) ||
+      labels.find((l) => l.id === labelParam) ||
+      null
+    )
+  }, [labels, labelParam])
+
+  const activeLabelId = activeLabel?.id || null
+
   const [createOpen, setCreateOpen] = useState(false)
   const [createInitialDue, setCreateInitialDue] = useState<Date | undefined>()
   const [createInitialTitle, setCreateInitialTitle] = useState('')
@@ -131,35 +159,65 @@ export function AppShell() {
   const onHome = location.pathname === '/'
   const composerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const avatarButtonRef = useRef<HTMLButtonElement>(null)
+  useClickOutside([menuRef, avatarButtonRef], () => setMenuOpen(false), menuOpen)
+
+  const viewButtonRef = useRef<HTMLButtonElement>(null)
+  const viewMenuRef = useRef<HTMLDivElement>(null)
+  useClickOutside([viewMenuRef, viewButtonRef], () => setViewMenuOpen(false), viewMenuOpen)
+
+  useEffect(() => {
+    if (!menuOpen && !viewMenuOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setMenuOpen(false)
+        setViewMenuOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menuOpen, viewMenuOpen])
 
   const displayName =
     user?.displayName?.trim() || user?.email?.split('@')[0] || 'Account'
 
-  const activeProject = activeProjectId ? projects.find((p) => p.id === activeProjectId) : null
-  const activeLabel = activeLabelId ? labels.find((l) => l.id === activeLabelId) : null
-
   const handleSelectProject = useCallback(
     (id: string | null, options?: { clearLabel?: boolean }) => {
       const next = new URLSearchParams(location.search)
-      if (id) next.set('project', id)
-      else next.delete('project')
+      if (id) {
+        const found = projects.find((p) => p.id === id)
+        next.set('project', found ? found.name : id)
+      } else {
+        next.delete('project')
+      }
       if (options?.clearLabel) next.delete('label')
       const search = next.toString()
-      navigate(search ? `/?${search}` : '/', { replace: true })
+      const target = search ? `/?${search}` : '/'
+      if (`${location.pathname}${location.search}` !== target) {
+        navigate(target)
+      }
     },
-    [location.search, navigate],
+    [location.pathname, location.search, navigate, projects],
   )
 
   const handleSelectLabel = useCallback(
     (id: string | null, options?: { clearProject?: boolean }) => {
       const next = new URLSearchParams(location.search)
-      if (id) next.set('label', id)
-      else next.delete('label')
+      if (id) {
+        const found = labels.find((l) => l.id === id)
+        next.set('label', found ? found.name : id)
+      } else {
+        next.delete('label')
+      }
       if (options?.clearProject) next.delete('project')
       const search = next.toString()
-      navigate(search ? `/?${search}` : '/', { replace: true })
+      const target = search ? `/?${search}` : '/'
+      if (`${location.pathname}${location.search}` !== target) {
+        navigate(target)
+      }
     },
-    [location.search, navigate],
+    [location.pathname, location.search, navigate, labels],
   )
 
   useEffect(() => {
@@ -260,7 +318,7 @@ export function AppShell() {
       const next = new URLSearchParams(location.search)
       next.delete('label')
       const search = next.toString()
-      navigate(search ? `/?${search}` : '/', { replace: true })
+      navigate(search ? `/?${search}` : '/')
     }
   }
 
@@ -283,14 +341,32 @@ export function AppShell() {
     <div className="mx-auto flex min-h-dvh max-w-[680px] flex-col px-5 pb-[calc(6.5rem+env(safe-area-inset-bottom))] sm:px-6">
       <header className="sticky top-0 z-30 -mx-5 sm:-mx-6 mb-8 flex items-center justify-between gap-3 border-b border-[var(--hairline)] bg-[var(--canvas)]/95 px-5 sm:px-6 pt-6 pb-5 backdrop-blur">
         <div className="flex items-center gap-3">
-          <button 
-            type="button" 
-            className="focus-ring flex h-11 w-11 items-center justify-center rounded-[var(--radius-control)] text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)] -ml-2"
-            onClick={() => setSidebarOpen(true)}
-            aria-label="Open navigation"
-          >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
-          </button>
+          {onHome ? (
+            <button 
+              type="button" 
+              className="focus-ring flex h-11 w-11 items-center justify-center rounded-[var(--radius-control)] text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)] -ml-2"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open navigation"
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="focus-ring flex h-11 w-11 items-center justify-center rounded-[var(--radius-control)] text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)] -ml-2"
+              onClick={() => {
+                if (window.history.length > 1) {
+                  navigate(-1)
+                } else {
+                  navigate('/')
+                }
+              }}
+              aria-label="Go back"
+              title="Go back"
+            >
+              <ArrowLeft size={22} />
+            </button>
+          )}
           <div className="flex items-center gap-2">
             <ZeoMark size={32} />
             <div>
@@ -354,6 +430,7 @@ export function AppShell() {
           
           <div className="relative">
             <button
+              ref={viewButtonRef}
               type="button"
               onClick={() => setViewMenuOpen((v) => !v)}
               className="focus-ring flex h-11 w-11 items-center justify-center rounded-[var(--radius-control)] text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)]"
@@ -370,6 +447,7 @@ export function AppShell() {
                   onClick={() => setViewMenuOpen(false)}
                 />
                 <div
+                  ref={viewMenuRef}
                   role="menu"
                   className="absolute top-full right-0 z-50 mt-2 w-40 overflow-hidden rounded-[var(--radius-control)] border border-[var(--hairline)] bg-[var(--surface)] py-1 shadow-[var(--shadow-card)]"
                 >
@@ -406,6 +484,7 @@ export function AppShell() {
             <Search size={20} />
           </button>
           <button
+            ref={avatarButtonRef}
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
             className="focus-ring rounded-full ring-offset-2 ring-offset-[var(--canvas)] hover:opacity-90"

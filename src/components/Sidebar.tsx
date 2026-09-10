@@ -4,6 +4,7 @@ import { NavLink } from 'react-router-dom'
 import { useProjects } from '../hooks/useProjects'
 import { useLabels } from '../hooks/useLabels'
 import { EntityManageModal } from './EntityManageModal'
+import { useModalBack } from '../hooks/useModalBack'
 
 type SidebarProps = {
   open: boolean
@@ -22,6 +23,8 @@ export function Sidebar({
   activeLabelId,
   onSelectLabel,
 }: SidebarProps) {
+  useModalBack(open, onClose, 'sidebar-drawer')
+
   const { projects, create: createProj, update: updateProj, remove: removeProj } = useProjects()
   const { labels, create: createLbl, update: updateLbl, remove: removeLbl } = useLabels()
   
@@ -48,6 +51,19 @@ export function Sidebar({
       document.body.style.overflow = ''
     }
   }, [open])
+
+  // Escape key listener
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
 
   useEffect(() => {
     if (creatingProject && inputRef.current) {
@@ -336,8 +352,14 @@ export function Sidebar({
           onSave={async (updates) => {
             if (editingEntity.type === 'project') {
               await updateProj(editingEntity.id, updates)
+              if (activeProjectId === editingEntity.id) {
+                onSelectProject(editingEntity.id)
+              }
             } else {
               await updateLbl(editingEntity.id, updates)
+              if (activeLabelId === editingEntity.id) {
+                onSelectLabel?.(editingEntity.id)
+              }
             }
           }}
           onDelete={async () => {

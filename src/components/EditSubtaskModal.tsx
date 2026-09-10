@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo } from 'react'
-import { createPortal } from 'react-dom'
 import { format, isToday, isTomorrow, parseISO, addDays } from 'date-fns'
-import { X, CalendarIcon } from './icons'
+import { CalendarIcon } from './icons'
 import { DueDatePicker } from './DueDatePicker'
 import { SmartTaskTitleInput } from './SmartTaskTitleInput'
 import { parseSubtaskTitle } from '../lib/taskParsers'
+import { Modal } from './Modal'
 import type { Chore } from '../types/models'
 
 type Props = {
@@ -79,47 +79,33 @@ export function EditSubtaskModal({
       : format(currentDateObj, 'MMM d, yyyy · h:mm a')
     : 'No due date'
 
-  const modal = (
-    <div
-      className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
-      <div className="w-full sm:max-w-md sm:rounded-[var(--radius-modal)] rounded-t-[1.25rem] bg-[var(--surface)] shadow-2xl modal-panel overflow-hidden max-h-[90dvh] flex flex-col">
-        {/* Header */}
-        <div className="flex items-start justify-between border-b border-[var(--hairline)] px-5 py-4">
-          <div className="min-w-0 flex-1">
-            <p className="font-mono-meta text-[11px] uppercase tracking-widest text-[var(--muted)]">
-              Checklist Item
-            </p>
-            <div className="mt-1 flex items-center gap-1.5 text-xs text-[var(--muted)]">
-              <span>Part of</span>
-              <button
-                type="button"
-                onClick={() => {
-                  onClose()
-                  if (parentChoreId) onOpenParent?.(parentChoreId)
-                }}
-                className="truncate font-semibold text-[var(--ink)] hover:text-[var(--accent)] underline underline-offset-2"
-                title={`Open "${parentTitle}"`}
-              >
-                {parentTitle}
-              </button>
-            </div>
+  return (
+    <>
+      <Modal
+        open={open}
+        onClose={onClose}
+        modalId="edit-subtask"
+        subtitle="Checklist Item"
+        title={
+          <div className="flex items-center gap-1.5 text-xs text-[var(--muted)] font-normal">
+            <span>Part of</span>
+            <button
+              type="button"
+              onClick={() => {
+                onClose()
+                if (parentChoreId) onOpenParent?.(parentChoreId)
+              }}
+              className="truncate font-semibold text-[var(--ink)] hover:text-[var(--accent)] underline underline-offset-2"
+              title={`Open "${parentTitle}"`}
+            >
+              {parentTitle}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="focus-ring -mr-2 flex h-9 w-9 items-center justify-center rounded-full text-[var(--muted)] hover:bg-[var(--quiet)]"
-            aria-label="Close"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        {/* Form Body */}
-        <form onSubmit={handleSave} className="flex-1 overflow-y-auto p-5 space-y-5">
+        }
+        maxWidth="sm:max-w-md"
+        zIndex="z-[200]"
+      >
+        <form onSubmit={handleSave} className="p-5 space-y-5">
           <div>
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
               Item Title
@@ -212,7 +198,7 @@ export function EditSubtaskModal({
             </p>
           </div>
 
-          <div className="flex items-center justify-between border-t border-[var(--hairline)] pt-4 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
+          <div className="flex items-center justify-between border-t border-[var(--hairline)] pt-4">
             {confirmDelete ? (
               <div className="flex items-center gap-2">
                 <span className="text-xs text-[var(--danger)]">Delete item?</span>
@@ -259,7 +245,7 @@ export function EditSubtaskModal({
             </div>
           </div>
         </form>
-      </div>
+      </Modal>
 
       {duePickerOpen && (
         <DueDatePicker
@@ -271,8 +257,6 @@ export function EditSubtaskModal({
           }}
         />
       )}
-    </div>
+    </>
   )
-
-  return createPortal(modal, document.body)
 }

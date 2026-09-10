@@ -341,6 +341,8 @@ exports.gcalExchangeCode = (0, https_1.onCall)(async (request) => {
             syncToken: null,
             tombstones: [],
             lastSyncedAt: null,
+            needsReauth: false,
+            lastAuthError: null,
         };
         await db.doc(`users/${uid}/integrations/googleCalendar`).set(docData, { merge: true });
         // Trigger initial background sync
@@ -384,6 +386,7 @@ exports.gcalRefreshToken = (0, https_1.onCall)(async (request) => {
         throw new https_1.HttpsError('unauthenticated', 'User must be authenticated');
     }
     const uid = request.auth.uid;
+    const forceRefresh = Boolean(request.data?.forceRefresh);
     const db = (0, firestore_1.getFirestore)();
     const gcalSnap = await db.doc(`users/${uid}/integrations/googleCalendar`).get();
     if (!gcalSnap.exists) {
@@ -392,7 +395,7 @@ exports.gcalRefreshToken = (0, https_1.onCall)(async (request) => {
     const gcalData = gcalSnap.data();
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const token = await (0, gcal_1.getValidBackendToken)(db, uid, gcalData, clientId, clientSecret);
+    const token = await (0, gcal_1.getValidBackendToken)(db, uid, gcalData, clientId, clientSecret, forceRefresh);
     if (!token) {
         throw new https_1.HttpsError('internal', 'Could not refresh token');
     }

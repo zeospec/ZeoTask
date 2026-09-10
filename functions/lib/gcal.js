@@ -106,29 +106,38 @@ async function ensureBackendZeoTaskCalendar(accessToken) {
  * Helper to get or refresh a valid access token for the user.
  * Proactively refreshes if token will expire within 15 minutes.
  */
-async function getValidBackendToken(db, uid, integration, clientId, clientSecret) {
+async function getValidBackendToken(db, uid, integration, clientId, clientSecret, forceRefresh = false) {
     const now = Date.now();
     const { accessToken, refreshToken, expiresAt } = integration;
-    // If token is valid (> 15 minutes remaining), return it directly.
+    // If token is valid (> 15 minutes remaining) and not forceRefresh, return it directly.
     // 15-minute buffer guarantees two scheduler tick opportunities to renew before expiry.
-    if (accessToken && expiresAt && expiresAt > now + 15 * 60 * 1000) {
+    if (!forceRefresh && accessToken && expiresAt && expiresAt > now + 15 * 60 * 1000) {
         return accessToken;
     }
     // If we have a refresh token and OAuth credentials, refresh silently in the background
     if (refreshToken && clientId && clientSecret) {
         try {
-            firebase_functions_1.logger.info('Proactive token auto-refresh executing for user', { uid });
+            firebase_functions_1.logger.info('Proactive token auto-refresh executing for user', { uid, forceRefresh });
             const renewed = await refreshGoogleToken(clientId, clientSecret, refreshToken);
             const newExpiresAt = now + renewed.expiresIn * 1000;
             await db.doc(`users/${uid}/integrations/googleCalendar`).update({
                 accessToken: renewed.accessToken,
                 expiresAt: newExpiresAt,
+                needsReauth: false,
+                lastAuthError: null,
                 updatedAt: new Date().toISOString(),
             });
             return renewed.accessToken;
         }
         catch (err) {
             firebase_functions_1.logger.warn('Background token refresh failed:', err);
+            if (err?.message?.includes('invalid_grant')) {
+                await db.doc(`users/${uid}/integrations/googleCalendar`).update({
+                    needsReauth: true,
+                    lastAuthError: 'REVOKED',
+                    updatedAt: new Date().toISOString(),
+                });
+            }
         }
     }
     // If token has expired and could not be renewed, return null
@@ -367,7 +376,7 @@ async function deleteChoreFromGCalBackend(gcalEventId, calendarId, accessToken) 
 async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
     if (!integration.enabled || !integration.calendarId)
         return;
-    const token = await getValidBackendToken(db, uid, integration, clientId, clientSecret);
+    let token = await getValidBackendToken(db, uid, integration, clientId, clientSecret);
     if (!token)
         return;
     const calendarId = integration.calendarId;
@@ -382,6 +391,14 @@ async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
         pullUrl += `&syncToken=${encodeURIComponent(syncToken)}`;
     }
     let pullRes = await fetch(pullUrl, { headers: authHeaders(token) });
+    if (pullRes.status === 401) {
+        firebase_functions_1.logger.info('Received 401 on pull, forcing token refresh...', { uid });
+        const freshToken = await getValidBackendToken(db, uid, integration, clientId, clientSecret, true);
+        if (freshToken) {
+            token = freshToken;
+            pullRes = await fetch(pullUrl, { headers: authHeaders(token) });
+        }
+    }
     let nextSyncToken = null;
     let events = [];
     if (pullRes.status === 410) {
@@ -745,6 +762,8 @@ async function syncGCalForUser(db, uid, integration, clientId, clientSecret) {
         syncToken: nextSyncToken || syncToken,
         tombstones: tombstoneArray,
         lastSyncedAt: nowIso,
+        needsReauth: false,
+        lastAuthError: null,
     });
 }
 //# sourceMappingURL=gcal.js.map

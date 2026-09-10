@@ -39,6 +39,7 @@ Solo · Donetick-faithful UX · mineral forest green visual · optimistic Firest
 | `DueDatePicker.tsx` | Calendar-style date picker used in create/edit. |
 | `SearchOverlay.tsx` | ⌘F full-text search overlay. |
 | `ToastStack.tsx` | Stacking undo/info toasts. |
+| `Modal.tsx` | Unified reusable modal/sheet component with portal, scroll lock, Escape handler, and history back sync. |
 
 ## Hooks
 
@@ -50,6 +51,9 @@ Solo · Donetick-faithful UX · mineral forest green visual · optimistic Firest
 | `useProjects.tsx` | CRUD + subscription for projects |
 | `usePwa.tsx` | Install prompt, SW update detection |
 | `useViews.tsx` | View-related state (agenda/week/month) |
+| `useModalBack.ts` | Stack-aware history synchronizer: syncs modal open/close with hardware/swipe back. |
+| `usePwaExitGuard.ts` | Standalone PWA exit guard: requires double-back within 2s at app root to exit. |
+| `useClickOutside.ts` | Reusable document pointerdown click-outside hook for dropdowns and popovers. |
 
 ## Lib modules
 
@@ -202,6 +206,42 @@ npm run build
       - **Two-Way Notes / Description Sync:** ZeoTask `description` (task notes) and Google Calendar event `description` synchronize bidirectionally. `extractGCalDescription(eventDesc)` isolates user notes from the auto-generated checklist footer (`Checklist:\n...`), ensuring user notes are preserved and never lost in transit.
       - **Sync Event Listener Decoupling:** In `useChores.tsx`, listeners for `visibilitychange`, `window focus`, and periodic intervals reference `choresRef.current` with `[user]` dependency, preventing an infinite cascade of sync passes on every single local keystroke or task update.
       - **Modal Menu Stacking Context & Z-Index:** In `CreateTaskModal.tsx`, the `Menu` fullscreen backdrop `<button>` is set to `z-[60]`. The dropdown content container MUST use `sm:z-[70]` (matching mobile `z-[70]`). If set to `sm:z-30` or any value `< 60`, the invisible transparent backdrop sits *in front of* the dropdown options on desktop, swallowing mouse clicks, immediately triggering `onClose()`, and preventing users from selecting projects, labels, priority, or repeat settings.
-      - **GCal Graceful Auth Degradation & 401 Protection:** Never return a known-expired `accessToken` from `getValidGCalAccessToken` or `getValidBackendToken`. Returning a dead token guarantees `401 Unauthorized` and spams errors on every tab switch / window focus. Instead, return `null` and mark `needsReauth: true` on `users/{uid}/integrations/googleCalendar`. In `/profile`, display an amber `Reconnect Required` status badge and banner with a 1-click Reconnect CTA (`signInWithPopup`). Automatically route manual "Sync Now" clicks through `onConnectGCal()` when re-auth is needed.
+      - **GCal Permanent Self-Healing & 401 Retry (Zero-Expiry Architecture):**
+        - **Never mark `needsReauth: true` on standard 401:** Google access tokens expire naturally every 60 minutes. A 401 or expired token simply means the access token needs renewal. `pushSingleChore`, `handleCompleteChore`, and `executeFullPass` catch 401s, force a backend refresh via `getValidGCalAccessToken(uid, /* forceRefresh */ true)`, and retry the request once. Only if Google's OAuth endpoint explicitly returns `invalid_grant` (user revoked access in Google Account) is `needsReauth: true` ever recorded.
+        - **No hard lockout on `needsReauth`:** `getValidGCalAccessToken` does not bail when `needsReauth` is set; it proactively calls `gcalRefreshToken({ forceRefresh: true })` using the permanent `refreshToken` in Firestore to heal itself automatically.
+        - **Cloud Functions clears `needsReauth`:** When `getValidBackendToken`, `syncGCalForUser`, or `gcalExchangeCode` refresh or sync, they update Firestore with `needsReauth: false` and `lastAuthError: null`.
+        - **Real-Time Subscription & Client Self-Healing:** `ProfilePage.tsx` listens to the integration document in real-time via `onSnapshot` and automatically attempts background renewal when `needsReauth` or `isGCalExpired` is detected, restoring "Active" status without user interaction.
+- **2026-09-10:** Mobile & PWA Back Navigation, Overlay History & Reusable Modal Architecture:
+  - **The Problem:** On mobile and standalone PWA, hardware back button or swipe-back gesture abruptly terminated the PWA instead of closing active modals, drawers, or navigating back through filter selections.
+  - **Stack-Aware History Synchronization (`useModalBack.ts`):**
+    - Pushes a dedicated history entry on modal mount/open.
+    - Global `popstate` listener pops and closes the top-most modal when user swipes back or clicks browser Back.
+    - When modal is closed via UI ('X' button, backdrop tap, Save/Cancel), calls `window.history.back()` if and only if `window.history.state?.modalId === idToRemove`. Uses `isProgrammaticBack` flag to swallow the resulting popstate event, preventing parent modals or underlying views from closing inadvertently.
+    - Full nesting support: e.g. `DueDatePicker` inside `CreateTaskModal` or `EditSubtaskModal`. Swiping back dismisses the date picker first, leaving the task modal open; swiping back again dismisses the task modal.
+  - **Unified Component Abstraction (`Modal.tsx`):**
+    - Encapsulates `createPortal(..., document.body)` so modals never get clipped by parent CSS transforms (like `Sidebar` drawer).
+    - Built-in body scroll lock, Escape key listener, responsive layout (bottom sheet with safe-area padding on mobile `items-end pb-[calc(1.25rem+env(safe-area-inset-bottom))]`, centered card on desktop `sm:items-center`), and automatic `useModalBack` registration.
+    - Refactored `EntityManageModal.tsx` and `EditSubtaskModal.tsx` to use `<Modal>`.
+    - Integrated `useModalBack` into `DueDatePicker.tsx`, `CreateTaskModal.tsx`, `SearchOverlay.tsx`, and `Sidebar.tsx`.
+  - **Filter & Subpage Navigation (`AppShell.tsx`):**
+    - Removed `{ replace: true }` from `handleSelectProject`, `handleSelectLabel`, and `handleFilterChange`. Selecting a project/label pushes to history, so phone back gesture steps backward to the previous view/All Tasks.
+    - Sticky header dynamically renders an `ArrowLeft` (`←`) button when `!onHome`, providing universal 1-tap return from subpages (`/profile`, `/completed`).
+    - Removed redundant in-page `← Tasks` links from `ProfilePage.tsx` and `CompletedPage.tsx`.
+  - **Human-Readable Relatable URL Schema (`AppShell.tsx`):**
+    - Switched project and label query parameters from cryptic Firestore document IDs (`?project=9ZkH83...`) to human-readable names (`?project=Rotaract`, `?label=urgent`).
+    - Bidirectional resolution: `activeProject` and `activeLabel` match case-insensitively on `p.name` (with URL decoding) and retain fallback to `p.id` for backward compatibility with existing links or bookmarks.
+    - Seamless entity renaming: editing a project or label name in `Sidebar` re-selects it with the updated name, instantly refreshing the URL.
+  - **Comprehensive Click-Outside & Backdrop Dismissal:**
+    - `useClickOutside.ts`: Reusable hook capturing global `pointerdown` events to dismiss dropdowns and popovers (`FilterMenu`, View selector, Account menu) whenever clicking anywhere outside.
+    - Backdrop clipping fix: Sticky header with `backdrop-blur` previously trapped child `fixed inset-0` backdrops. `useClickOutside` guarantees clicks anywhere on the document (e.g. task list, whitespace) immediately dismiss open menus.
+    - Modal outer click handling: Added `onClick={(e) => { if (e.target === e.currentTarget) onClose() }}` on outer container divs of `CreateTaskModal`, `DueDatePicker`, and `SearchOverlay` so clicking in outer padding/margins immediately dismisses the modal.
+    - Portaled `CreateTaskModal` to `document.body` via `createPortal`.
+- **2026-09-10:** Fixed Google Calendar Session Expiry & Permanent Self-Healing 2-Way Sync:
+  - **Diagnosed Premature Flagging:** Eager 401 handling in `syncCoordinator.ts` immediately set `needsReauth: true` on standard 1-hour access token expiration. `getValidGCalAccessToken` had an unconditional `if (needsReauth) return null` check which prevented the client from ever using the permanent refresh token via Cloud Functions.
+  - **Zero-Expiry Self-Healing Token Lifecycle:** `getValidGCalAccessToken(uid, forceRefresh)` transparently calls `gcalRefreshToken` whenever the token is expiring (< 10m), expired, or forced. Successful renewal clears `needsReauth: false` and `lastAuthError: null`. Token expiry on the client clock never stamps `needsReauth: true`.
+  - **Single 401 Retry Loop:** `pushSingleChore`, `handleCompleteChore`, and `executeFullPass` catch 401s, force token refresh via Cloud Functions, and retry once. If Google returns `invalid_grant` during refresh, only then is `needsReauth: true` stamped.
+  - **Real-Time Integration Subscription in `/profile`:** Replaced one-shot `getGCalIntegration` with `onSnapshot`. Added proactive background self-healing on page mount/listen.
+  - **Preserved Refresh Tokens in Popup Auth:** Ensured `signInWithPopup` fallback preserves existing `refreshToken: gcalDoc?.refreshToken`. Added `waitForGoogleOAuth` to avoid GIS script race conditions.
+  - **Backend Auto-Clear:** Cloud Functions (`reminderTick`, `getValidBackendToken`, `syncGCalForUser`, and `gcalExchangeCode`) clear `needsReauth: false` and `lastAuthError: null` on successful token renewal and sync. Added one-time 401 retry on backend inbound pull.
 
 

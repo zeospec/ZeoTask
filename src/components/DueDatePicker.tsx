@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from './icons'
+import { useModalBack } from '../hooks/useModalBack'
 import {
   addDays,
   addMonths,
@@ -49,6 +50,8 @@ function chipClass(active: boolean) {
 }
 
 export function DueDatePicker({ value, isAllDay, onApply, onClose }: Props) {
+  useModalBack(true, onClose, 'due-date-picker')
+
   const [cursor, setCursor] = useState(() => startOfMonth(value ?? new Date()))
   const [selected, setSelected] = useState<Date | null>(value)
   const [allDay, setAllDay] = useState<boolean>(() => isAllDay ?? (value ? false : true))
@@ -61,6 +64,17 @@ export function DueDatePicker({ value, isAllDay, onApply, onClose }: Props) {
     return !matchingQuickTimeLabel(value.getHours(), value.getMinutes())
   })
   const timeInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   const days = useMemo(() => buildCalendar(cursor), [cursor])
 
@@ -110,7 +124,14 @@ export function DueDatePicker({ value, isAllDay, onApply, onClose }: Props) {
     : 'No date selected'
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 backdrop-blur-sm p-3 sm:items-center">
+    <div
+      className="fixed inset-0 z-[250] flex items-end justify-center bg-black/40 backdrop-blur-sm p-3 sm:items-center"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose()
+        }
+      }}
+    >
       <button
         type="button"
         className="absolute inset-0 cursor-default"

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { format, isTomorrow, isToday, parseISO } from 'date-fns'
 import { DueDatePicker } from './DueDatePicker'
 import { Check, Plus, X, Tag, Pencil, Trash, CalendarIcon } from './icons'
@@ -20,6 +21,7 @@ import {
   parseSubtaskTitle,
   type SmartParseResult,
 } from '../lib/taskParsers'
+import { useModalBack } from '../hooks/useModalBack'
 import type { Chore, Frequency, Priority, Subtask } from '../types/models'
 
 type Props = {
@@ -108,6 +110,39 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [session, setSession] = useState(0)
   const isEdit = Boolean(editing)
+
+  useModalBack(open, onClose, isEdit ? 'edit-task-modal' : 'create-task-modal')
+
+  // Lock body scroll when open
+  useEffect(() => {
+    if (!open) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [open])
+
+  // Escape key closes menus first, then modal
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (dueOpen) { setDueOpen(false); return }
+        if (subDatePickerTarget) { setSubDatePickerTarget(null); return }
+        if (repeatOpen) { setRepeatOpen(false); return }
+        if (priorityOpen) { setPriorityOpen(false); return }
+        if (labelsOpen) { setLabelsOpen(false); return }
+        if (projectsOpen) { setProjectsOpen(false); return }
+        if (atMenuOpen) { setAtMenuOpen(false); return }
+        if (hashMenuOpen) { setHashMenuOpen(false); return }
+        e.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose, dueOpen, subDatePickerTarget, repeatOpen, priorityOpen, labelsOpen, projectsOpen, atMenuOpen, hashMenuOpen])
 
   const reset = useCallback(() => {
     setRawTitle(initialTitle || '')
@@ -456,8 +491,15 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
     onSaved()
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-[var(--ink)]/35 p-3 sm:items-center">
+  const modalContent = (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-[var(--ink)]/35 p-3 sm:items-center"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose()
+        }
+      }}
+    >
       <button type="button" className="absolute inset-0" aria-label="Close" onClick={onClose} />
       <div
         ref={panelRef}
@@ -1430,6 +1472,8 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
       )}
     </div>
   )
+
+  return createPortal(modalContent, document.body)
 }
 
 

@@ -11,6 +11,17 @@ const modalStack: ModalStackEntry[] = []
 let isProgrammaticBack = false
 let popStateListenerAttached = false
 
+export type PopStateInterceptor = (event: PopStateEvent) => boolean | void
+
+let exitGuardInterceptor: PopStateInterceptor | null = null
+
+export function setExitGuardInterceptor(fn: PopStateInterceptor | null) {
+  exitGuardInterceptor = fn
+  if (fn) {
+    ensurePopStateListener()
+  }
+}
+
 export function getModalStackDepth(): number {
   return modalStack.length
 }
@@ -19,7 +30,7 @@ function ensurePopStateListener() {
   if (typeof window === 'undefined' || popStateListenerAttached) return
   popStateListenerAttached = true
 
-  window.addEventListener('popstate', () => {
+  window.addEventListener('popstate', (event: PopStateEvent) => {
     if (isProgrammaticBack) {
       isProgrammaticBack = false
       return
@@ -30,6 +41,11 @@ function ensurePopStateListener() {
       if (top) {
         top.close()
       }
+      return
+    }
+
+    if (exitGuardInterceptor) {
+      exitGuardInterceptor(event)
     }
   })
 }

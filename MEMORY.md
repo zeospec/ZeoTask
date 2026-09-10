@@ -52,7 +52,7 @@ Solo · Donetick-faithful UX · mineral forest green visual · optimistic Firest
 | `usePwa.tsx` | Install prompt, SW update detection |
 | `useViews.tsx` | View-related state (agenda/week/month) |
 | `useModalBack.ts` | Stack-aware history synchronizer: syncs modal open/close with hardware/swipe back. |
-| `usePwaExitGuard.ts` | Standalone PWA exit guard: requires double-back within 2s at app root to exit. |
+| `usePwaExitGuard.ts` | Double-back exit guard for mobile/standalone PWA: coordinated with useModalBack to only guard bare home screen. |
 | `useClickOutside.ts` | Reusable document pointerdown click-outside hook for dropdowns and popovers. |
 
 ## Lib modules
@@ -243,5 +243,16 @@ npm run build
   - **Real-Time Integration Subscription in `/profile`:** Replaced one-shot `getGCalIntegration` with `onSnapshot`. Added proactive background self-healing on page mount/listen.
   - **Preserved Refresh Tokens in Popup Auth:** Ensured `signInWithPopup` fallback preserves existing `refreshToken: gcalDoc?.refreshToken`. Added `waitForGoogleOAuth` to avoid GIS script race conditions.
   - **Backend Auto-Clear:** Cloud Functions (`reminderTick`, `getValidBackendToken`, `syncGCalForUser`, and `gcalExchangeCode`) clear `needsReauth: false` and `lastAuthError: null` on successful token renewal and sync. Added one-time 401 retry on backend inbound pull.
+- **2026-09-10:** Coordinated PWA Exit Guard & Modal Back Architecture:
+  - **The Problem:** In mobile and standalone PWA, an uncoordinated `usePwaExitGuard` was previously firing "Swipe back again to exit ZeoTask" whenever any modal or task edit view was closed, because `popstate` fired on `/` when the modal or task detail popped from history.
+  - **Coordinated Single Dispatch Pipeline:**
+    - `useModalBack.ts` manages the single central `popstate` listener for history pop events.
+    - If `isProgrammaticBack` is active (modal closed via UI 'X', backdrop click, or Save/Cancel), the event is swallowed cleanly.
+    - If `modalStack.length > 0` (user swiped back to close an open modal, sheet, or picker), `top.close()` is called and the event is consumed immediately—the exit guard is NEVER called.
+    - Only when `modalStack.length === 0` and `isProgrammaticBack === false` does the centralized `exitGuardInterceptor` run.
+  - **Origin-Aware Route Detection (`usePwaExitGuard.ts`):**
+    - Tracks `currentPathRef` across route transitions. When user swipes back from `/chore/:id`, `/profile`, `/completed`, or `/?project=...` to `/`, the guard detects `fromPath !== '/'` and returns to All Tasks smoothly without triggering the exit toast.
+    - The double-back exit guard ("Swipe back again to exit ZeoTask") triggers exclusively when the user is already sitting on the bare root home screen (`/` with no modals, no sheets, and no filters) and swipes back. A second swipe back within 2 seconds cleanly exits/minimizes the app.
+
 
 

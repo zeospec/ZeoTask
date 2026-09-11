@@ -14,7 +14,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { getDb } from './firebase'
-import { nextDueAfterComplete } from './scheduler'
+import { nextDueAfterComplete, isChoreAllDay } from './scheduler'
 import { defaultNotificationSettings, normalizeNotificationSettings } from './userSettings'
 import type {
   Chore,
@@ -168,7 +168,7 @@ function buildPayload(input: ChoreInput, stamp: string): Omit<Chore, 'id'> {
   const reminderEnabled = input.reminderEnabled ?? true
   const predueHours = input.predueHours ?? 24
   const dueAt = input.dueAt ?? null
-  const isAllDay = input.isAllDay ?? Boolean(dueAt && !dueAt.includes('T'))
+  const isAllDay = input.isAllDay !== undefined ? input.isAllDay : isChoreAllDay({ dueAt, isAllDay: input.isAllDay })
   const nextReminderAt = computeNextReminderAt({
     dueAt,
     reminderEnabled,
@@ -239,6 +239,10 @@ export function updateChore(
   const finalPatch: Record<string, unknown> = {
     ...patch,
     updatedAt: nowIso(),
+  }
+
+  if ('dueAt' in patch && patch.dueAt && !('isAllDay' in patch)) {
+    finalPatch.isAllDay = isChoreAllDay({ dueAt: patch.dueAt })
   }
 
   // If dueAt, reminderEnabled, or predueHours changed, recompute nextReminderAt
@@ -454,6 +458,11 @@ export function expandChoresWithSubtasks(chores: Chore[]): Chore[] {
             ? subtask.dueAt
             : chore.dueAt
 
+        const effectiveIsAllDay =
+          subtask.dueAt !== undefined && subtask.dueAt !== null
+            ? isChoreAllDay(subtask)
+            : isChoreAllDay(chore)
+
         result.push({
           id: `subtask:${chore.id}:${subtask.id}`,
           title: subtask.title,
@@ -461,6 +470,7 @@ export function expandChoresWithSubtasks(chores: Chore[]): Chore[] {
           priority: chore.priority,
           status: 'none',
           dueAt: effectiveDueAt,
+          isAllDay: effectiveIsAllDay,
           isRolling: chore.isRolling,
           frequency: 'once',
           repeatEvery: 1,

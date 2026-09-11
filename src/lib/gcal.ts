@@ -1,6 +1,6 @@
 import { addDays, format } from 'date-fns'
 import type { Chore, Subtask } from '../types/models'
-import { parseChoreDue } from './scheduler'
+import { parseChoreDue, isChoreAllDay } from './scheduler'
 
 const GCAL_API_BASE = 'https://www.googleapis.com/calendar/v3'
 
@@ -130,7 +130,7 @@ export function extractGCalDescription(eventDesc?: string | null): string {
  * Builds Google Calendar event payload from a ZeoTask Chore.
  */
 function buildGCalEventPayload(chore: Chore) {
-  const isAllDay = Boolean(chore.isAllDay)
+  const isAllDay = isChoreAllDay(chore)
   const due = parseChoreDue(chore.dueAt)
 
   let start: GCalEventDate
@@ -249,7 +249,7 @@ export async function pushTaskToGCal(
  * Builds Google Calendar event payload for a Subtask with a deadline.
  */
 function buildGCalSubtaskPayload(subtask: Subtask, parentChore: Chore) {
-  const isAllDay = Boolean(subtask.isAllDay)
+  const isAllDay = isChoreAllDay(subtask)
   const due = parseChoreDue(subtask.dueAt)
 
   let start: GCalEventDate

@@ -10,6 +10,8 @@ import {
   endOfWeek,
   format,
   isSameDay,
+  isToday,
+  isTomorrow,
   nextSaturday,
   setHours,
   setMinutes,
@@ -54,13 +56,31 @@ export function DueDatePicker({ value, isAllDay, onApply, onClose }: Props) {
 
   const [cursor, setCursor] = useState(() => startOfMonth(value ?? new Date()))
   const [selected, setSelected] = useState<Date | null>(value)
-  const [allDay, setAllDay] = useState<boolean>(() => isAllDay ?? (value ? false : true))
-  const [timeHour, setTimeHour] = useState(() => (value && !isAllDay ? value.getHours() : 9))
-  const [timeMinute, setTimeMinute] = useState(() =>
-    value && !isAllDay ? value.getMinutes() : 0,
-  )
+  const [allDay, setAllDay] = useState<boolean>(() => {
+    if (isAllDay !== undefined) {
+      if (isAllDay) return true
+      if (!value || (value.getHours() === 0 && value.getMinutes() === 0 && value.getSeconds() === 0)) {
+        return true
+      }
+      return false
+    }
+    if (!value) return true
+    return value.getHours() === 0 && value.getMinutes() === 0 && value.getSeconds() === 0
+  })
+  const [timeHour, setTimeHour] = useState(() => {
+    if (value && (value.getHours() !== 0 || value.getMinutes() !== 0)) {
+      return value.getHours()
+    }
+    return 9
+  })
+  const [timeMinute, setTimeMinute] = useState(() => {
+    if (value && (value.getHours() !== 0 || value.getMinutes() !== 0)) {
+      return value.getMinutes()
+    }
+    return 0
+  })
   const [showCustomTime, setShowCustomTime] = useState(() => {
-    if (!value || isAllDay) return false
+    if (!value || isAllDay || (value.getHours() === 0 && value.getMinutes() === 0)) return false
     return !matchingQuickTimeLabel(value.getHours(), value.getMinutes())
   })
   const timeInputRef = useRef<HTMLInputElement>(null)
@@ -80,14 +100,32 @@ export function DueDatePicker({ value, isAllDay, onApply, onClose }: Props) {
 
   function pickDate(day: Date) {
     const base = startOfDay(day)
-    const withTime = allDay ? base : setMinutes(setHours(base, timeHour), timeMinute)
-    setSelected(withTime)
+    const hasExplicitNonZeroTime =
+      !allDay &&
+      (timeHour !== 0 || timeMinute !== 0) &&
+      (showCustomTime || quickTimes.some((q) => q.hour === timeHour && q.minute === timeMinute))
+
+    if (!hasExplicitNonZeroTime) {
+      setAllDay(true)
+      setSelected(base)
+    } else {
+      setSelected(setMinutes(setHours(base, timeHour), timeMinute))
+    }
   }
 
   function applyQuickDate(day: Date) {
     const base = startOfDay(day)
-    const withTime = allDay ? base : setMinutes(setHours(base, timeHour), timeMinute)
-    setSelected(withTime)
+    const hasExplicitNonZeroTime =
+      !allDay &&
+      (timeHour !== 0 || timeMinute !== 0) &&
+      (showCustomTime || quickTimes.some((q) => q.hour === timeHour && q.minute === timeMinute))
+
+    if (!hasExplicitNonZeroTime) {
+      setAllDay(true)
+      setSelected(base)
+    } else {
+      setSelected(setMinutes(setHours(base, timeHour), timeMinute))
+    }
     setCursor(startOfMonth(day))
   }
 
@@ -117,10 +155,16 @@ export function DueDatePicker({ value, isAllDay, onApply, onClose }: Props) {
 
   const summary = selected
     ? allDay
-      ? `${format(selected, 'EEE, MMM d')} · All-Day`
-      : `${format(selected, 'EEE, MMM d · h:mm a')}${
-          quickTimeLabel ? ` (${quickTimeLabel})` : ''
-        }`
+      ? isToday(selected)
+        ? 'Today · All-Day'
+        : isTomorrow(selected)
+        ? 'Tomorrow · All-Day'
+        : `${format(selected, 'EEE, MMM d')} · All-Day`
+      : isToday(selected)
+      ? `Today · ${format(selected, 'h:mm a')}${quickTimeLabel ? ` (${quickTimeLabel})` : ''}`
+      : isTomorrow(selected)
+      ? `Tomorrow · ${format(selected, 'h:mm a')}${quickTimeLabel ? ` (${quickTimeLabel})` : ''}`
+      : `${format(selected, 'EEE, MMM d · h:mm a')}${quickTimeLabel ? ` (${quickTimeLabel})` : ''}`
     : 'No date selected'
 
   const modalContent = (

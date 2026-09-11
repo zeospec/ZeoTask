@@ -57,7 +57,11 @@ export function InlineQuickAdd({ activeProjectId, activeLabelId, onExpand }: Pro
     createTask({
       title: parsed.cleanedTitle || 'Untitled',
       description: '',
-      dueAt: finalDue ? finalDue.toISOString() : null,
+      dueAt: finalDue
+        ? parsed.isAllDay
+          ? format(finalDue, 'yyyy-MM-dd')
+          : finalDue.toISOString()
+        : null,
       isAllDay: parsed.isAllDay,
       frequency: finalFreq || 'once',
       repeatEvery: 1,

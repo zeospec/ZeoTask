@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { format, isTomorrow, isToday, parseISO } from 'date-fns'
+import { format, isTomorrow, isToday } from 'date-fns'
 import { DueDatePicker } from './DueDatePicker'
 import { Check, Plus, X, Tag, Pencil, Trash, CalendarIcon } from './icons'
 import { RichDescriptionEditor } from './RichDescriptionEditor'
@@ -11,7 +11,9 @@ import { useLabels } from '../hooks/useLabels'
 import { useProjects } from '../hooks/useProjects'
 import { ensureLabelIds } from '../lib/labels'
 import {
+  formatDueDisplay,
   formatPreviewDue,
+  isChoreAllDay,
   parseChoreDue,
   previewNextDue,
   recurrenceSummary,
@@ -88,11 +90,13 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
   const [subtasks, setSubtasks] = useState<Subtask[]>([])
   const [subDraft, setSubDraft] = useState('')
   const [subDraftDue, setSubDraftDue] = useState<string | null>(null)
+  const [subDraftIsAllDay, setSubDraftIsAllDay] = useState(true)
   const [subDatePickerTarget, setSubDatePickerTarget] = useState<'draft' | string | null>(null)
   const [recentlyAddedId, setRecentlyAddedId] = useState<string | null>(null)
   const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null)
   const [editingSubtaskTitle, setEditingSubtaskTitle] = useState('')
   const [editingSubtaskDue, setEditingSubtaskDue] = useState<string | null>(null)
+  const [editingSubtaskIsAllDay, setEditingSubtaskIsAllDay] = useState(false)
   const [confirmDeleteSubtaskId, setConfirmDeleteSubtaskId] = useState<string | null>(null)
   const [dueOpen, setDueOpen] = useState(false)
   const [repeatOpen, setRepeatOpen] = useState(false)
@@ -168,11 +172,13 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
     setSubtasks([])
     setSubDraft('')
     setSubDraftDue(null)
+    setSubDraftIsAllDay(false)
     setSubDatePickerTarget(null)
     setRecentlyAddedId(null)
     setEditingSubtaskId(null)
     setEditingSubtaskTitle('')
     setEditingSubtaskDue(null)
+    setEditingSubtaskIsAllDay(false)
     setConfirmDeleteSubtaskId(null)
     setDueOpen(false)
     setRepeatOpen(false)
@@ -192,7 +198,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
       setIgnoredTokens([])
       setParsed(() => parseSmartTitle(editing.title, []))
       setDueOverride(undefined)
-      setIsAllDayOverride(editing.isAllDay)
+      setIsAllDayOverride(undefined)
       setFreqOverride(undefined)
       setPrioOverride(undefined)
       setProjectOverride(undefined)
@@ -211,6 +217,11 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
       reset()
       if (initialDue) {
         setDueOverride(initialDue)
+        const isMidnight =
+          initialDue.getHours() === 0 &&
+          initialDue.getMinutes() === 0 &&
+          initialDue.getSeconds() === 0
+        setIsAllDayOverride(isMidnight)
       }
     }
   }, [open, editing, initialDue, reset, labels])
@@ -269,6 +280,16 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
 
   const onParsed = useCallback((next: SmartParseResult) => {
     setParsed(next)
+    if (next.highlights.some((h) => h.kind === 'due')) {
+      setDueOverride(undefined)
+      setIsAllDayOverride(undefined)
+    }
+    if (next.highlights.some((h) => h.kind === 'repeat')) {
+      setFreqOverride(undefined)
+    }
+    if (next.highlights.some((h) => h.kind === 'priority')) {
+      setPrioOverride(undefined)
+    }
   }, [])
 
   const labelNames = (() => {
@@ -294,22 +315,24 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
 
   const hasNlpDue = parsed.highlights.some((h) => h.kind === 'due')
   const dueAt =
-    dueOverride !== undefined
-      ? dueOverride
-      : hasNlpDue
-        ? parsed.dueAt
+    hasNlpDue
+      ? parsed.dueAt
+      : dueOverride !== undefined
+        ? dueOverride
         : editing
           ? parseChoreDue(editing.dueAt)
           : parsed.dueAt
 
   const isAllDay =
-    isAllDayOverride !== undefined
-      ? isAllDayOverride
-      : hasNlpDue
-        ? parsed.isAllDay
+    hasNlpDue
+      ? parsed.isAllDay
+      : isAllDayOverride !== undefined
+        ? isAllDayOverride
         : editing
-          ? Boolean(editing.isAllDay)
-          : parsed.isAllDay
+          ? isChoreAllDay(editing)
+          : dueAt
+            ? (dueAt.getHours() === 0 && dueAt.getMinutes() === 0 && dueAt.getSeconds() === 0)
+            : true
 
   const hasNlpPriority = parsed.highlights.some((h) => h.kind === 'priority')
   const priority =
@@ -362,32 +385,44 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
 
   const subDraftNlp = useMemo(() => parseSubtaskTitle(subDraft), [subDraft])
   const effectiveSubDraftDue =
-    subDraftDue ||
-    (subDraftNlp.dueAt ? subDraftNlp.dueAt.toISOString() : null)
+    subDraftNlp.dueAt
+      ? subDraftNlp.isAllDay
+        ? format(subDraftNlp.dueAt, 'yyyy-MM-dd')
+        : subDraftNlp.dueAt.toISOString()
+      : subDraftDue
 
   const editingSubtaskNlp = useMemo(
     () => parseSubtaskTitle(editingSubtaskTitle),
     [editingSubtaskTitle],
   )
   const effectiveEditingSubtaskDue =
-    editingSubtaskDue ||
-    (editingSubtaskNlp.dueAt ? editingSubtaskNlp.dueAt.toISOString() : null)
+    editingSubtaskNlp.dueAt
+      ? editingSubtaskNlp.isAllDay
+        ? format(editingSubtaskNlp.dueAt, 'yyyy-MM-dd')
+        : editingSubtaskNlp.dueAt.toISOString()
+      : editingSubtaskDue
 
   function addSubtask() {
     const t = subDraft.trim()
     if (!t) return
     const parsed = parseSubtaskTitle(t)
-    const finalTitle = subDraftDue ? t : (parsed.cleanedTitle || t)
-    const finalDue =
-      subDraftDue || (parsed.dueAt ? parsed.dueAt.toISOString() : null)
+    const hasNlp = Boolean(parsed.dueAt)
+    const finalTitle = hasNlp ? (parsed.cleanedTitle || t) : (subDraftDue ? t : (parsed.cleanedTitle || t))
+    const isSubAllDay = hasNlp ? parsed.isAllDay : (subDraftDue ? subDraftIsAllDay : true)
+    const finalDue = hasNlp
+      ? parsed.isAllDay
+        ? format(parsed.dueAt!, 'yyyy-MM-dd')
+        : parsed.dueAt!.toISOString()
+      : subDraftDue
 
     const id = crypto.randomUUID()
     setSubtasks((prev) => [
       ...prev,
-      { id, title: finalTitle, completed: false, dueAt: finalDue },
+      { id, title: finalTitle, completed: false, dueAt: finalDue, isAllDay: isSubAllDay },
     ])
     setSubDraft('')
     setSubDraftDue(null)
+    setSubDraftIsAllDay(true)
     setRecentlyAddedId(id)
     window.setTimeout(() => setRecentlyAddedId(null), 1400)
     requestAnimationFrame(() => subEditorRef.current?.focus())
@@ -397,6 +432,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
     setEditingSubtaskId(s.id)
     setEditingSubtaskTitle(s.title)
     setEditingSubtaskDue(s.dueAt || null)
+    setEditingSubtaskIsAllDay(isChoreAllDay(s))
   }
 
   function saveEditSubtask() {
@@ -404,17 +440,23 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
     const trimmed = editingSubtaskTitle.trim()
     if (trimmed) {
       const parsed = parseSubtaskTitle(trimmed)
-      const finalTitle = editingSubtaskDue
-        ? trimmed
-        : (parsed.cleanedTitle || trimmed)
-      const finalDue =
-        editingSubtaskDue ||
-        (parsed.dueAt ? parsed.dueAt.toISOString() : null)
+      const hasNlp = Boolean(parsed.dueAt)
+      const finalTitle = hasNlp
+        ? (parsed.cleanedTitle || trimmed)
+        : (editingSubtaskDue ? trimmed : (parsed.cleanedTitle || trimmed))
+      const isSubAllDay = hasNlp
+        ? parsed.isAllDay
+        : editingSubtaskDue
+          ? editingSubtaskIsAllDay
+          : true
+      const finalDue = hasNlp
+        ? (parsed.isAllDay ? format(parsed.dueAt!, 'yyyy-MM-dd') : parsed.dueAt!.toISOString())
+        : editingSubtaskDue
 
       setSubtasks((prev) =>
         prev.map((x) =>
           x.id === editingSubtaskId
-            ? { ...x, title: finalTitle, dueAt: finalDue }
+            ? { ...x, title: finalTitle, dueAt: finalDue, isAllDay: isSubAllDay }
             : x,
         ),
       )
@@ -422,6 +464,7 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
     setEditingSubtaskId(null)
     setEditingSubtaskTitle('')
     setEditingSubtaskDue(null)
+    setEditingSubtaskIsAllDay(false)
   }
 
   async function submit() {
@@ -726,7 +769,15 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
                   {dueAt && (
                     <span className="group flex items-center gap-1 rounded-full bg-[var(--accent-wash)] pl-2.5 pr-1.5 py-1 font-mono-meta text-[11px] text-[var(--accent)]">
                       {isAllDay
-                        ? format(dueAt, 'EEE, MMM d')
+                        ? isToday(dueAt)
+                          ? 'Today'
+                          : isTomorrow(dueAt)
+                          ? 'Tomorrow'
+                          : format(dueAt, 'EEE, MMM d')
+                        : isToday(dueAt)
+                        ? `Today · ${format(dueAt, 'h:mm a')}`
+                        : isTomorrow(dueAt)
+                        ? `Tomorrow · ${format(dueAt, 'h:mm a')}`
                         : format(dueAt, 'EEE, MMM d · h:mm a')}
                       <button
                         type="button"
@@ -842,7 +893,15 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
                 >
                   {dueAt
                     ? isAllDay
-                      ? format(dueAt, 'MMM d')
+                      ? isToday(dueAt)
+                        ? 'Today'
+                        : isTomorrow(dueAt)
+                        ? 'Tomorrow'
+                        : format(dueAt, 'MMM d')
+                      : isToday(dueAt)
+                      ? `Today · ${format(dueAt, 'h:mm a')}`
+                      : isTomorrow(dueAt)
+                      ? `Tomorrow · ${format(dueAt, 'h:mm a')}`
                       : format(dueAt, 'MMM d · h:mm a')
                     : 'Due'}
                 </Pill>
@@ -1159,7 +1218,6 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
               <ul className="space-y-1">
                 {subtasks.map((s) => {
                   const isEditingThis = editingSubtaskId === s.id
-                  const sDate = s.dueAt ? parseISO(s.dueAt) : null
 
                   if (isEditingThis) {
                     return (
@@ -1193,7 +1251,15 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
                           >
                             <CalendarIcon size={13} />
                             {effectiveEditingSubtaskDue
-                              ? format(parseISO(effectiveEditingSubtaskDue), 'MMM d')
+                              ? (() => {
+                                  const d = parseChoreDue(effectiveEditingSubtaskDue)
+                                  if (!d) return 'Due date'
+                                  const isSubAll = editingSubtaskDue ? editingSubtaskIsAllDay : editingSubtaskNlp.isAllDay
+                                  if (isSubAll) {
+                                    return isToday(d) ? 'Today' : isTomorrow(d) ? 'Tomorrow' : format(d, 'MMM d')
+                                  }
+                                  return isToday(d) ? `Today · ${format(d, 'h:mm a')}` : format(d, 'MMM d')
+                                })()
                               : 'Due date'}
                           </button>
                           <button
@@ -1262,14 +1328,10 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
                         >
                           {s.title}
                         </span>
-                        {sDate && (
+                        {s.dueAt && (
                           <span className="ml-2 inline-flex items-center gap-1 rounded bg-[var(--quiet)] px-1.5 py-0.5 font-mono-meta text-[10.5px] font-medium text-[var(--accent)]">
                             <CalendarIcon size={10} />
-                            {isToday(sDate)
-                              ? 'Today'
-                              : isTomorrow(sDate)
-                              ? 'Tomorrow'
-                              : format(sDate, 'MMM d')}
+                            {formatDueDisplay(s)}
                           </span>
                         )}
                       </div>
@@ -1359,7 +1421,15 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
                 >
                   <CalendarIcon size={13} />
                   {effectiveSubDraftDue
-                    ? format(parseISO(effectiveSubDraftDue), 'MMM d')
+                    ? (() => {
+                        const d = parseChoreDue(effectiveSubDraftDue)
+                        if (!d) return 'Date'
+                        const isSubAll = subDraftDue ? subDraftIsAllDay : subDraftNlp.isAllDay
+                        if (isSubAll) {
+                          return isToday(d) ? 'Today' : isTomorrow(d) ? 'Tomorrow' : format(d, 'MMM d')
+                        }
+                        return isToday(d) ? `Today · ${format(d, 'h:mm a')}` : format(d, 'MMM d')
+                      })()
                     : 'Date'}
                 </button>
 
@@ -1443,27 +1513,44 @@ export function CreateTaskModal({ open, editing, initialDue, initialTitle, initi
           value={
             subDatePickerTarget === 'draft'
               ? subDraftDue
-                ? parseISO(subDraftDue)
+                ? parseChoreDue(subDraftDue)
                 : (dueAt || new Date())
               : (() => {
                   const s = subtasks.find((x) => x.id === subDatePickerTarget)
-                  return s?.dueAt ? parseISO(s.dueAt) : null
+                  return s?.dueAt ? parseChoreDue(s.dueAt) : null
+                })()
+          }
+          isAllDay={
+            subDatePickerTarget === 'draft'
+              ? subDraftDue
+                ? subDraftIsAllDay
+                : isAllDay
+              : (() => {
+                  const s = subtasks.find((x) => x.id === subDatePickerTarget)
+                  return s ? isChoreAllDay(s) : true
                 })()
           }
           onClose={() => setSubDatePickerTarget(null)}
-          onApply={(date) => {
+          onApply={(date, allDay) => {
+            const formatted = date
+              ? allDay
+                ? format(date, 'yyyy-MM-dd')
+                : date.toISOString()
+              : null
             if (subDatePickerTarget === 'draft') {
-              setSubDraftDue(date ? date.toISOString() : null)
+              setSubDraftDue(formatted)
+              setSubDraftIsAllDay(Boolean(allDay))
             } else {
               setSubtasks((prev) =>
                 prev.map((x) =>
                   x.id === subDatePickerTarget
-                    ? { ...x, dueAt: date ? date.toISOString() : null }
+                    ? { ...x, dueAt: formatted, isAllDay: Boolean(allDay) }
                     : x,
                 ),
               )
               if (editingSubtaskId === subDatePickerTarget) {
-                setEditingSubtaskDue(date ? date.toISOString() : null)
+                setEditingSubtaskDue(formatted)
+                setEditingSubtaskIsAllDay(Boolean(allDay))
               }
             }
             setSubDatePickerTarget(null)

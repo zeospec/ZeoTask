@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef, type FormEvent } from 'react'
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom'
-import { format, parseISO, isToday, isTomorrow } from 'date-fns'
+import { format, isToday, isTomorrow } from 'date-fns'
 import { ArrowLeft, Check, Plus, X, Pencil, Trash, CalendarIcon } from '../components/icons'
 import { DueDatePicker } from '../components/DueDatePicker'
 import { SmartTaskTitleInput } from '../components/SmartTaskTitleInput'
@@ -10,7 +10,7 @@ import { useLabels } from '../hooks/useLabels'
 import { toggleSubtask, updateChore, updateSubtask, deleteSubtask } from '../lib/chores'
 import { parseSubtaskTitle } from '../lib/taskParsers'
 import { sanitizeHtml, isPlainOrEmptyDescription } from '../lib/html'
-import { formatDueDisplay, recurrenceSummary } from '../lib/scheduler'
+import { formatDueDisplay, recurrenceSummary, parseChoreDue, isChoreAllDay } from '../lib/scheduler'
 import { getSyncCoordinator } from '../lib/syncCoordinator'
 import type { Chore, Subtask } from '../types/models'
 
@@ -29,11 +29,13 @@ export function ChoreDetailPage() {
   const chore = useMemo(() => chores.find((c) => c.id === id), [chores, id])
   const [subTitle, setSubTitle] = useState('')
   const [subDue, setSubDue] = useState<string | null>(null)
+  const [subIsAllDay, setSubIsAllDay] = useState(true)
   const [subDatePickerTarget, setSubDatePickerTarget] = useState<'draft' | string | null>(null)
   const [recentlyAddedId, setRecentlyAddedId] = useState<string | null>(null)
   const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null)
   const [editingSubtaskTitle, setEditingSubtaskTitle] = useState('')
   const [editingSubtaskDue, setEditingSubtaskDue] = useState<string | null>(null)
+  const [editingSubtaskIsAllDay, setEditingSubtaskIsAllDay] = useState(false)
   const [confirmDeleteSubtaskId, setConfirmDeleteSubtaskId] = useState<string | null>(null)
   const subEditorRef = useRef<HTMLDivElement>(null)
   const [busy, setBusy] = useState(false)
@@ -41,15 +43,22 @@ export function ChoreDetailPage() {
 
   const subTitleNlp = useMemo(() => parseSubtaskTitle(subTitle), [subTitle])
   const effectiveSubDue =
-    subDue || (subTitleNlp.dueAt ? subTitleNlp.dueAt.toISOString() : null)
+    subTitleNlp.dueAt
+      ? subTitleNlp.isAllDay
+        ? format(subTitleNlp.dueAt, 'yyyy-MM-dd')
+        : subTitleNlp.dueAt.toISOString()
+      : subDue
 
   const editingSubtaskNlp = useMemo(
     () => parseSubtaskTitle(editingSubtaskTitle),
     [editingSubtaskTitle],
   )
   const effectiveEditingSubtaskDue =
-    editingSubtaskDue ||
-    (editingSubtaskNlp.dueAt ? editingSubtaskNlp.dueAt.toISOString() : null)
+    editingSubtaskNlp.dueAt
+      ? editingSubtaskNlp.isAllDay
+        ? format(editingSubtaskNlp.dueAt, 'yyyy-MM-dd')
+        : editingSubtaskNlp.dueAt.toISOString()
+      : editingSubtaskDue
 
   if (!chore) {
     return (
@@ -72,8 +81,14 @@ export function ChoreDetailPage() {
     if (!user || !subTitle.trim() || !chore) return
     const id = crypto.randomUUID()
     const parsed = parseSubtaskTitle(subTitle)
-    const finalTitle = subDue ? subTitle.trim() : (parsed.cleanedTitle || subTitle.trim())
-    const finalDue = subDue || (parsed.dueAt ? parsed.dueAt.toISOString() : null)
+    const hasNlp = Boolean(parsed.dueAt)
+    const finalTitle = hasNlp ? (parsed.cleanedTitle || subTitle.trim()) : (subDue ? subTitle.trim() : (parsed.cleanedTitle || subTitle.trim()))
+    const isSubAllDay = hasNlp ? parsed.isAllDay : (subDue ? subIsAllDay : true)
+    const finalDue = hasNlp
+      ? parsed.isAllDay
+        ? format(parsed.dueAt!, 'yyyy-MM-dd')
+        : parsed.dueAt!.toISOString()
+      : subDue
 
     const updatedSubtasks: Subtask[] = [
       ...chore.subtasks,
@@ -82,6 +97,7 @@ export function ChoreDetailPage() {
         title: finalTitle,
         completed: false,
         dueAt: finalDue,
+        isAllDay: isSubAllDay,
       },
     ]
 
@@ -105,12 +121,14 @@ export function ChoreDetailPage() {
     })
     setSubTitle('')
     setSubDue(null)
+    setSubIsAllDay(true)
   }
 
   function startEditSubtask(s: Subtask) {
     setEditingSubtaskId(s.id)
     setEditingSubtaskTitle(s.title)
     setEditingSubtaskDue(s.dueAt || null)
+    setEditingSubtaskIsAllDay(isChoreAllDay(s))
   }
 
   function saveEditSubtask(sId: string) {
@@ -118,12 +136,17 @@ export function ChoreDetailPage() {
     const trimmed = editingSubtaskTitle.trim()
     if (!trimmed) return
     const parsed = parseSubtaskTitle(trimmed)
-    const finalTitle = editingSubtaskDue ? trimmed : (parsed.cleanedTitle || trimmed)
-    const finalDue =
-      editingSubtaskDue || (parsed.dueAt ? parsed.dueAt.toISOString() : null)
+    const hasNlp = Boolean(parsed.dueAt)
+    const finalTitle = hasNlp ? (parsed.cleanedTitle || trimmed) : (editingSubtaskDue ? trimmed : (parsed.cleanedTitle || trimmed))
+    const isSubAllDay = hasNlp ? parsed.isAllDay : (editingSubtaskDue ? editingSubtaskIsAllDay : true)
+    const finalDue = hasNlp
+      ? parsed.isAllDay
+        ? format(parsed.dueAt!, 'yyyy-MM-dd')
+        : parsed.dueAt!.toISOString()
+      : editingSubtaskDue
 
     const updatedSubtasks = chore.subtasks.map((s) =>
-      s.id === sId ? { ...s, title: finalTitle, dueAt: finalDue } : s,
+      s.id === sId ? { ...s, title: finalTitle, dueAt: finalDue, isAllDay: isSubAllDay } : s,
     )
 
     runWrite(
@@ -131,6 +154,7 @@ export function ChoreDetailPage() {
       updateSubtask(user.uid, chore, sId, {
         title: finalTitle,
         dueAt: finalDue,
+        isAllDay: isSubAllDay,
       }),
       'Could not update checklist item',
     )
@@ -142,6 +166,7 @@ export function ChoreDetailPage() {
     setEditingSubtaskId(null)
     setEditingSubtaskTitle('')
     setEditingSubtaskDue(null)
+    setEditingSubtaskIsAllDay(true)
   }
 
   function deleteSubtaskAction(sId: string) {
@@ -277,7 +302,6 @@ export function ChoreDetailPage() {
         <ul className="space-y-1">
           {chore.subtasks.map((s) => {
             const isEditingThis = editingSubtaskId === s.id
-            const sDate = s.dueAt ? parseISO(s.dueAt) : null
 
             if (isEditingThis) {
               return (
@@ -311,7 +335,15 @@ export function ChoreDetailPage() {
                     >
                       <CalendarIcon size={13} />
                       {effectiveEditingSubtaskDue
-                        ? format(parseISO(effectiveEditingSubtaskDue), 'MMM d')
+                        ? (() => {
+                            const d = parseChoreDue(effectiveEditingSubtaskDue)
+                            if (!d) return 'Due date'
+                            const isSubAll = editingSubtaskDue ? editingSubtaskIsAllDay : editingSubtaskNlp.isAllDay
+                            if (isSubAll) {
+                              return isToday(d) ? 'Today' : isTomorrow(d) ? 'Tomorrow' : format(d, 'MMM d')
+                            }
+                            return isToday(d) ? `Today · ${format(d, 'h:mm a')}` : format(d, 'MMM d')
+                          })()
                         : 'Due date'}
                     </button>
                     <button
@@ -389,14 +421,10 @@ export function ChoreDetailPage() {
                   >
                     {s.title}
                   </span>
-                  {sDate && (
+                  {s.dueAt && (
                     <span className="ml-2 inline-flex items-center gap-1 rounded bg-[var(--quiet)] px-1.5 py-0.5 font-mono-meta text-[10.5px] font-medium text-[var(--accent)]">
                       <CalendarIcon size={10} />
-                      {isToday(sDate)
-                        ? 'Today'
-                        : isTomorrow(sDate)
-                        ? 'Tomorrow'
-                        : format(sDate, 'MMM d')}
+                      {formatDueDisplay(s)}
                     </span>
                   )}
                 </div>
@@ -486,7 +514,17 @@ export function ChoreDetailPage() {
             }
           >
             <CalendarIcon size={13} />
-            {effectiveSubDue ? format(parseISO(effectiveSubDue), 'MMM d') : 'Date'}
+            {effectiveSubDue
+              ? (() => {
+                  const d = parseChoreDue(effectiveSubDue)
+                  if (!d) return 'Date'
+                  const isSubAll = subDue ? subIsAllDay : subTitleNlp.isAllDay
+                  if (isSubAll) {
+                    return isToday(d) ? 'Today' : isTomorrow(d) ? 'Tomorrow' : format(d, 'MMM d')
+                  }
+                  return isToday(d) ? `Today · ${format(d, 'h:mm a')}` : format(d, 'MMM d')
+                })()
+              : 'Date'}
           </button>
 
           <button
@@ -504,27 +542,43 @@ export function ChoreDetailPage() {
           value={
             subDatePickerTarget === 'draft'
               ? subDue
-                ? parseISO(subDue)
-                : chore.dueAt
-                ? parseISO(chore.dueAt)
-                : new Date()
+                ? parseChoreDue(subDue)
+                : parseChoreDue(chore.dueAt) || new Date()
               : (() => {
                   const s = chore.subtasks.find((x) => x.id === subDatePickerTarget)
-                  return s?.dueAt ? parseISO(s.dueAt) : null
+                  return s?.dueAt ? parseChoreDue(s.dueAt) : null
+                })()
+          }
+          isAllDay={
+            subDatePickerTarget === 'draft'
+              ? subDue
+                ? subIsAllDay
+                : isChoreAllDay(chore)
+              : (() => {
+                  const s = chore.subtasks.find((x) => x.id === subDatePickerTarget)
+                  return s ? isChoreAllDay(s) : true
                 })()
           }
           onClose={() => setSubDatePickerTarget(null)}
-          onApply={(date) => {
+          onApply={(date, allDay) => {
+            const formatted = date
+              ? allDay
+                ? format(date, 'yyyy-MM-dd')
+                : date.toISOString()
+              : null
             if (subDatePickerTarget === 'draft') {
-              setSubDue(date ? date.toISOString() : null)
+              setSubDue(formatted)
+              setSubIsAllDay(Boolean(allDay))
             } else if (subDatePickerTarget) {
               const targetId = subDatePickerTarget
-              setEditingSubtaskDue(date ? date.toISOString() : null)
+              setEditingSubtaskDue(formatted)
+              setEditingSubtaskIsAllDay(Boolean(allDay))
               if (user) {
                 runWrite(
                   chore.id,
                   updateSubtask(user.uid, chore, targetId, {
-                    dueAt: date ? date.toISOString() : null,
+                    dueAt: formatted,
+                    isAllDay: Boolean(allDay),
                   }),
                   'Could not update checklist item due date',
                 )

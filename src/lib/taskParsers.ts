@@ -248,37 +248,119 @@ function collectRepeat(input: string): RawMatch[] {
   return out
 }
 
+const ORDINAL_TIME_PATTERN =
+  /\b(?:(?:on|by|due\s+on|due)\s+)?(?:the\s+)?([1-9]|[12][0-9]|3[01])(?:st|nd|rd|th)\b(?!\s+(?:floor|century|grade|place|rank))(?:\s+(?:at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?|(\d{1,2}):(\d{2})\s*(am|pm)?|(\d{1,2})\s*(am|pm)))?/gi
+
 function collectDue(input: string): RawMatch[] {
-  const parsed = chrono.parse(input, new Date(), { forwardDate: true })
-  const dueDateMatch = [...parsed].reverse().find(
-    (match) =>
-      match.index !== undefined &&
-      isValidWordBoundary(input, match.index, match.text.length),
-  )
-  if (!dueDateMatch || dueDateMatch.index === undefined) return []
+  const refDate = new Date()
+  const chronoParsed = chrono.parse(input, refDate, { forwardDate: true })
 
-  const rawText = dueDateMatch.text
-  const text = rawText.trimEnd()
-  const dueDateStartIndex = dueDateMatch.index
-  const dueDateEndIndex = dueDateStartIndex + text.length
+  const ordinalMatches: Array<{
+    start: number
+    end: number
+    text: string
+    date: Date
+    isAllDay: boolean
+  }> = []
 
-  const isAllDay = !dueDateMatch.start.isCertain('hour')
-  let resultDate = dueDateMatch.start.date()
-  if (isAllDay) {
-    resultDate = new Date(resultDate)
-    resultDate.setHours(0, 0, 0, 0)
+  for (const match of input.matchAll(ORDINAL_TIME_PATTERN)) {
+    const rawText = match[0].trimEnd()
+    const start = match.index ?? 0
+    const end = start + rawText.length
+    if (!isValidWordBoundary(input, start, rawText.length)) continue
+
+    const day = parseInt(match[1], 10)
+    const hStr = match[2] || match[5] || match[8]
+    const minStr = match[3] || match[6]
+    const mer = match[4] || match[7] || match[9]
+
+    let targetYear = refDate.getFullYear()
+    let targetMonth = refDate.getMonth()
+    if (day < refDate.getDate()) {
+      targetMonth += 1
+      if (targetMonth > 11) {
+        targetMonth = 0
+        targetYear += 1
+      }
+    }
+    const d = new Date(targetYear, targetMonth, day)
+    const hasTime = hStr !== undefined
+    const isAllDay = !hasTime
+    if (hasTime) {
+      let h = parseInt(hStr, 10)
+      const min = minStr ? parseInt(minStr, 10) : 0
+      if (mer) {
+        const isPm = mer.toLowerCase() === 'pm'
+        if (isPm && h < 12) h += 12
+        if (!isPm && h === 12) h = 0
+      }
+      d.setHours(h, min, 0, 0)
+    } else {
+      d.setHours(0, 0, 0, 0)
+    }
+    ordinalMatches.push({ start, end, text: rawText, date: d, isAllDay })
   }
+
+  // Filter chrono matches that are only bare times subsumed by an ordinal date expression
+  const filteredChrono = chronoParsed.filter((cm) => {
+    if (cm.index === undefined) return false
+    const cStart = cm.index
+    const cEnd = cStart + cm.text.length
+    return !ordinalMatches.some((om) => om.start <= cStart && om.end >= cEnd)
+  })
+
+  // Filter ordinal matches that are subsumed by a fuller chrono match (e.g. "Sep 19th")
+  const filteredOrdinal = ordinalMatches.filter((om) => {
+    return !filteredChrono.some((cm) => {
+      if (cm.index === undefined) return false
+      return cm.index <= om.start && cm.index + cm.text.length >= om.end
+    })
+  })
+
+  const candidates: Array<{
+    start: number
+    end: number
+    text: string
+    date: Date
+    isAllDay: boolean
+  }> = []
+
+  for (const cm of filteredChrono) {
+    if (cm.index === undefined) continue
+    const rawText = cm.text
+    const text = rawText.trimEnd()
+    const start = cm.index
+    const end = start + text.length
+    if (!isValidWordBoundary(input, start, text.length)) continue
+    const isAllDay = !cm.start.isCertain('hour')
+    let resultDate = cm.start.date()
+    if (isAllDay) {
+      resultDate = new Date(resultDate)
+      resultDate.setHours(0, 0, 0, 0)
+    }
+    candidates.push({ start, end, text, date: resultDate, isAllDay })
+  }
+
+  for (const om of filteredOrdinal) {
+    candidates.push(om)
+  }
+
+  if (candidates.length === 0) return []
+
+  // Last match in the text wins
+  candidates.sort((a, b) => a.start - b.start)
+  const chosen = candidates[candidates.length - 1]
 
   return [
     {
       kind: 'due',
-      start: dueDateStartIndex,
-      end: dueDateEndIndex,
-      text: input.slice(dueDateStartIndex, dueDateEndIndex),
+      start: chosen.start,
+      end: chosen.end,
+      text: input.slice(chosen.start, chosen.end),
       priority: 20,
       apply: (acc) => {
-        acc.dueAt = resultDate
-        acc.isAllDay = isAllDay
+        acc.dueAt = chosen.date
+        acc.isAllDay = chosen.isAllDay
       },
     },
   ]

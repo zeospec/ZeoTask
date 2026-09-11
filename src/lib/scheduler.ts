@@ -160,6 +160,19 @@ export function parseChoreDue(dueAt: string | null | undefined): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
+export function isChoreAllDay(chore: { dueAt?: string | null; isAllDay?: boolean }): boolean {
+  if (!chore.dueAt) return chore.isAllDay !== undefined ? chore.isAllDay : true
+  if (/^\d{4}-\d{2}-\d{2}$/.test(chore.dueAt)) return true
+  const d = parseChoreDue(chore.dueAt)
+  if (!d) return chore.isAllDay !== undefined ? chore.isAllDay : true
+  // If midnight (00:00:00), treat as all-day activity regardless of legacy false flags
+  if (d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0) {
+    return true
+  }
+  if (chore.isAllDay !== undefined) return chore.isAllDay
+  return false
+}
+
 export function isChoreOverdue(
   chore: { dueAt?: string | null; isAllDay?: boolean; archivedAt?: string | null },
   now = new Date(),
@@ -167,7 +180,7 @@ export function isChoreOverdue(
   if (!chore.dueAt || chore.archivedAt) return false
   const due = parseChoreDue(chore.dueAt)
   if (!due) return false
-  if (chore.isAllDay) {
+  if (isChoreAllDay(chore)) {
     return isBefore(endOfDay(due), now)
   }
   return isBefore(due, now)
@@ -184,8 +197,9 @@ export function formatDueDisplay(
   const isTodayDate = isSameDay(due, now)
   const isTomorrowDate = isSameDay(due, addDays(now, 1))
   const isYesterdayDate = isSameDay(due, addDays(now, -1))
+  const allDay = isChoreAllDay(chore)
 
-  if (chore.isAllDay) {
+  if (allDay || (due.getHours() === 0 && due.getMinutes() === 0 && due.getSeconds() === 0)) {
     if (isTodayDate) return 'Today'
     if (isTomorrowDate) return 'Tomorrow'
     if (isYesterdayDate) return 'Yesterday'
@@ -285,8 +299,8 @@ export function byDue(a: Chore, b: Chore): number {
   if (!bDate) return -1
 
   // Epoch timestamp comparison eliminates timezone format mismatches (e.g. UTC Z vs +05:30)
-  const aTime = a.isAllDay ? endOfDay(aDate).getTime() : aDate.getTime()
-  const bTime = b.isAllDay ? endOfDay(bDate).getTime() : bDate.getTime()
+  const aTime = isChoreAllDay(a) ? endOfDay(aDate).getTime() : aDate.getTime()
+  const bTime = isChoreAllDay(b) ? endOfDay(bDate).getTime() : bDate.getTime()
 
   if (aTime !== bTime) {
     return aTime - bTime
@@ -342,7 +356,11 @@ export function priorityLabel(priority: number): string {
 
 /** Keep local clock time; move calendar day to today. */
 export function moveDueToToday(dueAtIso: string, now = new Date()): string {
-  const due = parseISO(dueAtIso)
+  if (isChoreAllDay({ dueAt: dueAtIso })) {
+    return format(now, 'yyyy-MM-dd')
+  }
+  const due = parseChoreDue(dueAtIso)
+  if (!due) return format(now, 'yyyy-MM-dd')
   const next = new Date(now)
   next.setHours(
     due.getHours(),

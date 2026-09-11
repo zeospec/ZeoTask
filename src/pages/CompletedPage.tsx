@@ -4,6 +4,7 @@ import { format, parseISO, isBefore, startOfDay } from 'date-fns'
 import { useAuth } from '../hooks/useAuth'
 import { useChores } from '../hooks/useChores'
 import { subscribeCompletedChores } from '../lib/chores'
+import { parseChoreDue, isChoreAllDay } from '../lib/scheduler'
 import type { Chore } from '../types/models'
 
 type ShellContext = {
@@ -96,8 +97,11 @@ export function CompletedPage() {
                   className="focus-ring shrink-0 rounded-lg px-2 py-1.5 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent-wash)]"
                   onClick={() => {
                     const now = new Date()
-                    const isPastOrEmpty = !chore.dueAt || isBefore(parseISO(chore.dueAt), startOfDay(now))
-                    const restoredDueAt = isPastOrEmpty ? now.toISOString() : chore.dueAt
+                    const due = parseChoreDue(chore.dueAt)
+                    const isPastOrEmpty = !due || isBefore(due, startOfDay(now))
+                    const restoredDueAt = isPastOrEmpty
+                      ? (isChoreAllDay(chore) ? format(now, 'yyyy-MM-dd') : now.toISOString())
+                      : chore.dueAt
                     updateTask(
                       chore.id,
                       {

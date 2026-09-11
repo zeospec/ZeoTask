@@ -255,6 +255,37 @@ npm run build
     - When user navigates back from `/profile`, `/completed`, or `/?project=...` to All Tasks (`/`), the entry landed on is the guarded root entry (`event.state?.__pwaRootGuard === true`). The guard recognizes this as a clean return to the home screen and immediately returns without showing any toast.
     - The double-back exit guard ("Swipe back again to exit ZeoTask") triggers exclusively when the user pops *off* the guarded root entry (`!event.state?.__pwaRootGuard`) onto the bare base entry on `/` with zero modals open.
     - **Drawer History Transition in `Sidebar.tsx` & `AppShell.tsx`:** Selecting an entity (project, label, or completed) from the open Sidebar uses `{ replace: true }` to cleanly replace the drawer's modal history entry. This prevents orphaned drawer entries from being trapped under the filtered route, guaranteeing that 1 tap/swipe back from any project filter or subpage returns straight to All Tasks.
-
-
-
+- **2026-09-11:** Whole-Day Activity & Ordinal Date Parsing Consistency:
+  - **The Problem:** Stand-alone ordinals like "19th", "on the 19th", "by 25th" were completely ignored by chrono-node. Dates specified without times (like "today", "tomorrow", or "19th") were intermittently treated as midnight timestamps (`12:00 AM`), saved as UTC ISO strings (`T18:30:00.000Z` in GMT+5:30), formatted with artificial time strings ("Today · 12:00 AM" or "Today · 11:59 PM"), and marked prematurely overdue in the morning. Checklist subtasks also lost their `isAllDay` flag when expanded or edited.
+  - **Ordinal NLP Parser (`src/lib/taskParsers.ts`):**
+    - Added `ORDINAL_TIME_PATTERN` (`/\b(?:(?:on|by|due\s+on|due)\s+)?(?:the\s+)?([1-9]|[12][0-9]|3[01])(?:st|nd|rd|th)\b(?!\s+(?:floor|century|grade|place|rank))(?:\s+(?:at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?|(\d{1,2}):(\d{2})\s*(am|pm)?|(\d{1,2})\s*(am|pm)))?/gi`).
+    - Resolves target days relative to the current calendar month; automatically rolls over to the next month if day < today.
+    - If no time is explicitly provided, marks `isAllDay: true` and zeros the time component.
+    - Intelligently merges with `chrono-node`: full chrono matches (e.g. "Sep 19th") take precedence, while partial bare-time chrono matches (e.g. "at 3pm") subsumed by ordinal phrases (e.g. "on 19th at 3pm") yield to the complete ordinal expression.
+    - Preserves "last-match-wins" contract so users can override due dates by typing a new value at the end of the input.
+    - Applied to both `parseSmartTitle` and `parseSubtaskTitle`.
+  - **Scheduler & Overdue Computation (`src/lib/scheduler.ts`):**
+    - Added universal `isChoreAllDay(chore)` helper: checks `chore.isAllDay`, date-only `yyyy-MM-dd` regex, or midnight (`00:00:00`).
+    - `isChoreOverdue`: compares with `endOfDay(due)` for all-day tasks, preventing tasks from being marked overdue in the morning.
+    - `formatDueDisplay`: renders clean "Today", "Tomorrow", "Sat, Sep 19" with zero "12:00 AM" noise.
+    - `byDue`: sorts all-day tasks at the end of their respective day (`endOfDay`) so timed tasks appear earlier.
+    - `moveDueToToday`: returns `yyyy-MM-dd` for all-day tasks.
+  - **Firestore & Subtask Integrity (`src/lib/chores.ts`):**
+    - `buildPayload` and `updateChore` automatically infer `isAllDay` using `isChoreAllDay`.
+    - `expandChoresWithSubtasks` copies `isAllDay` to expanded subtasks in the task stream.
+  - **Components & Modals Updated:**
+    - `DueDatePicker.tsx`: Defaults `allDay` to `true` when date is null or midnight (`00:00:00`), and falls back to 9:00 AM (not 12:00 AM) if unchecking "All Day".
+    - `InlineQuickAdd.tsx`: Saves all-day tasks with date-only `yyyy-MM-dd` and explicit `isAllDay: true`.
+    - `CreateTaskModal.tsx`: Preserves `isAllDay` for editing and calendar date clicks; supports `isAllDay` across checklist subtask creation and editing; uses `formatDueDisplay` for subtasks.
+    - `ChoreDetailPage.tsx`: Tracks `isAllDay` for subtask addition and inline edits; uses `parseChoreDue` and `formatDueDisplay`.
+    - `EditSubtaskModal.tsx`: Replaced `23:59:59` hack with clean `format(..., 'yyyy-MM-dd')` and `isAllDay: true`; uses `formatDueDisplay`.
+    - `CalendarView.tsx` & `CompletedPage.tsx`: Use `parseChoreDue` to eliminate timezone shifts on `yyyy-MM-dd` strings.
+    - `gcal.ts`: `buildGCalEventPayload` and `buildGCalSubtaskPayload` use `isChoreAllDay` to consistently create Google all-day events (`{ date: 'yyyy-MM-dd' }`).
+  - **Due Date Picker & Update Task Modal 12:00 AM Fix:**
+    - Diagnosed root cause: `isChoreAllDay(chore)` checked `if (chore.isAllDay !== undefined) return chore.isAllDay` before inspecting date strings. Older chores created with `isAllDay: false` (or undefined in Firestore) retained `false` even if their due date was midnight (`00:00:00`) or `yyyy-MM-dd`. When opened in `CreateTaskModal` or `DueDatePicker`, `allDay` defaulted to `false` and initialized `timeHour` to `0` (12:00 AM), so clicking "Today" in Quick Date set `withTime` to `12:00 AM`.
+    - Upgraded `isChoreAllDay`: always checks `/^\d{4}-\d{2}-\d{2}$/` and midnight (`00:00:00`) first before falling back to `chore.isAllDay`.
+    - Safety guard in `formatDueDisplay`: even if `allDay` is somehow false, if time is `00:00:00`, it formats as clean "Today" / "Tomorrow" and never appends "12:00 AM".
+    - Hardened `DueDatePicker`: initializes `allDay` to `true` if date is null or midnight; defaults `timeHour` fallback to `9` (Morning), never `0`; clicking Quick Date ("Today", "Tomorrow", etc.) or picking a calendar day switches to `allDay: true` unless an explicit non-zero time was activated; `summary` displays "Today · All-Day" or "Tomorrow · All-Day".
+    - Hardened `CreateTaskModal`: `isAllDay` defaults to `true` when `dueAt` is midnight or unset; Due chip and Due pill display "Today" / "Tomorrow" cleanly; checklist subtask draft defaults to `isAllDay: true`.
+    - Hardened `ChoreDetailPage` and `useChores`: preserved `isAllDay` across move-to-today mutations and checklist additions.
+    - Fixed NLP typed date override when editing an activity with an existing date: In `CreateTaskModal`, `isAllDayOverride` was initialized to `isChoreAllDay(editing)` on open, which acted as an active manual override that blocked `parsed.isAllDay` when the user typed a new due date like "today" in the title. Initialized `isAllDayOverride` to `undefined` on modal open; prioritized `hasNlpDue` so live parsed NLP dates (`dueAt` and `isAllDay`) take precedence over stale existing activity dates; cleared `dueOverride` and `isAllDayOverride` whenever `onParsed` detects a due phrase; applied identical precedence to subtask draft and inline editing.

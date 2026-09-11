@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from 'react'
-import { format, isToday, isTomorrow, parseISO, addDays } from 'date-fns'
+import { format, isToday, isTomorrow, addDays } from 'date-fns'
 import { CalendarIcon } from './icons'
 import { DueDatePicker } from './DueDatePicker'
 import { SmartTaskTitleInput } from './SmartTaskTitleInput'
 import { parseSubtaskTitle } from '../lib/taskParsers'
+import { formatDueDisplay, parseChoreDue, isChoreAllDay } from '../lib/scheduler'
 import { Modal } from './Modal'
 import type { Chore } from '../types/models'
 
@@ -11,7 +12,7 @@ type Props = {
   open: boolean
   subtaskChore: Chore | null
   onClose: () => void
-  onSave: (subtaskId: string, updates: { title: string; dueAt: string | null }) => void
+  onSave: (subtaskId: string, updates: { title: string; dueAt: string | null; isAllDay?: boolean }) => void
   onDelete: (subtaskId: string) => void
   onOpenParent?: (parentChoreId: string) => void
 }
@@ -26,6 +27,7 @@ export function EditSubtaskModal({
 }: Props) {
   const [title, setTitle] = useState('')
   const [dueAt, setDueAt] = useState<string | null>(null)
+  const [isAllDay, setIsAllDay] = useState<boolean>(true)
   const [duePickerOpen, setDuePickerOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [manualDueChosen, setManualDueChosen] = useState(false)
@@ -36,6 +38,7 @@ export function EditSubtaskModal({
     if (subtaskChore && open) {
       setTitle(subtaskChore.title)
       setDueAt(subtaskChore.dueAt)
+      setIsAllDay(isChoreAllDay(subtaskChore))
       setConfirmDelete(false)
       setDuePickerOpen(false)
       setManualDueChosen(false)
@@ -53,10 +56,15 @@ export function EditSubtaskModal({
     if (!trimmed || !subtaskChore?.subtaskId) return
     const parsed = parseSubtaskTitle(trimmed)
     const finalTitle = manualDueChosen ? trimmed : (parsed.cleanedTitle || trimmed)
+    const finalIsAllDay = manualDueChosen
+      ? isAllDay
+      : (parsed.dueAt ? parsed.isAllDay : isAllDay)
     const finalDue = manualDueChosen
       ? dueAt
-      : (parsed.dueAt ? parsed.dueAt.toISOString() : dueAt)
-    onSave(subtaskChore.subtaskId, { title: finalTitle, dueAt: finalDue })
+      : (parsed.dueAt
+          ? (parsed.isAllDay ? format(parsed.dueAt, 'yyyy-MM-dd') : parsed.dueAt.toISOString())
+          : dueAt)
+    onSave(subtaskChore.subtaskId, { title: finalTitle, dueAt: finalDue, isAllDay: finalIsAllDay })
     onClose()
   }
 
@@ -70,13 +78,9 @@ export function EditSubtaskModal({
     }
   }
 
-  const currentDateObj = dueAt ? parseISO(dueAt) : null
-  const formattedDue = currentDateObj
-    ? isToday(currentDateObj)
-      ? `Today · ${format(currentDateObj, 'h:mm a')}`
-      : isTomorrow(currentDateObj)
-      ? `Tomorrow · ${format(currentDateObj, 'h:mm a')}`
-      : format(currentDateObj, 'MMM d, yyyy · h:mm a')
+  const currentDateObj = parseChoreDue(dueAt)
+  const formattedDue = dueAt
+    ? formatDueDisplay({ dueAt, isAllDay })
     : 'No due date'
 
   return (
@@ -118,13 +122,23 @@ export function EditSubtaskModal({
                 highlights={nlpParsed.highlights}
                 placeholder="Checklist item title..."
                 autoFocus
-                className="box-border w-full border-0 bg-transparent text-base font-medium text-[var(--ink)] outline-none min-h-[1.5rem] whitespace-pre-wrap break-words empty:before:content-[attr(data-placeholder)] empty:before:text-[var(--muted)] empty:before:font-normal empty:before:pointer-events-none"
+                className="box-border w-full border-0 bg-transparent text-sm text-[var(--ink)] outline-none min-h-[1.5rem] whitespace-pre-wrap break-words empty:before:content-[attr(data-placeholder)] empty:before:text-[var(--muted)] empty:before:font-normal empty:before:pointer-events-none"
               />
             </div>
             {nlpParsed.dueAt && !manualDueChosen && (
-              <p className="mt-1.5 flex items-center gap-1.5 font-mono-meta text-xs text-[var(--accent)]">
+              <p className="mt-1.5 flex items-center gap-1 font-mono-meta text-xs text-[var(--accent)]">
                 <CalendarIcon size={12} />
-                <span>Auto-detected: <strong>{format(nlpParsed.dueAt, 'EEE, MMM d')}</strong> (will apply on save)</span>
+                Due: {nlpParsed.isAllDay
+                  ? isToday(nlpParsed.dueAt)
+                    ? 'Today'
+                    : isTomorrow(nlpParsed.dueAt)
+                    ? 'Tomorrow'
+                    : format(nlpParsed.dueAt, 'EEE, MMM d')
+                  : isToday(nlpParsed.dueAt)
+                  ? `Today · ${format(nlpParsed.dueAt, 'h:mm a')}`
+                  : isTomorrow(nlpParsed.dueAt)
+                  ? `Tomorrow · ${format(nlpParsed.dueAt, 'h:mm a')}`
+                  : format(nlpParsed.dueAt, 'EEE, MMM d · h:mm a')}
               </p>
             )}
           </div>
@@ -137,9 +151,8 @@ export function EditSubtaskModal({
               <button
                 type="button"
                 onClick={() => {
-                  const d = new Date()
-                  d.setHours(23, 59, 59, 0)
-                  setDueAt(d.toISOString())
+                  setDueAt(format(new Date(), 'yyyy-MM-dd'))
+                  setIsAllDay(true)
                   setManualDueChosen(true)
                 }}
                 className={`rounded-full px-3 py-1 font-mono-meta text-xs transition ${
@@ -153,9 +166,8 @@ export function EditSubtaskModal({
               <button
                 type="button"
                 onClick={() => {
-                  const d = addDays(new Date(), 1)
-                  d.setHours(23, 59, 59, 0)
-                  setDueAt(d.toISOString())
+                  setDueAt(format(addDays(new Date(), 1), 'yyyy-MM-dd'))
+                  setIsAllDay(true)
                   setManualDueChosen(true)
                 }}
                 className={`rounded-full px-3 py-1 font-mono-meta text-xs transition ${
@@ -185,6 +197,7 @@ export function EditSubtaskModal({
                   type="button"
                   onClick={() => {
                     setDueAt(null)
+                    setIsAllDay(true)
                     setManualDueChosen(true)
                   }}
                   className="rounded-full px-2.5 py-1 font-mono-meta text-xs text-[var(--muted)] hover:bg-red-50 hover:text-[var(--danger)] transition"
@@ -250,9 +263,17 @@ export function EditSubtaskModal({
       {duePickerOpen && (
         <DueDatePicker
           value={currentDateObj}
+          isAllDay={isAllDay}
           onClose={() => setDuePickerOpen(false)}
-          onApply={(date) => {
-            setDueAt(date ? date.toISOString() : null)
+          onApply={(date, allDay) => {
+            const formatted = date
+              ? allDay
+                ? format(date, 'yyyy-MM-dd')
+                : date.toISOString()
+              : null
+            setDueAt(formatted)
+            setIsAllDay(Boolean(allDay))
+            setManualDueChosen(true)
             setDuePickerOpen(false)
           }}
         />

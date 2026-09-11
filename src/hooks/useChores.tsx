@@ -17,7 +17,7 @@ import {
   updateChore as updateChoreWrite,
   type ChoreInput,
 } from '../lib/chores'
-import { moveDueToToday } from '../lib/scheduler'
+import { moveDueToToday, isChoreAllDay } from '../lib/scheduler'
 import type { Chore, ChoreCompleteSnapshot, Subtask } from '../types/models'
 import { getSyncCoordinator } from '../lib/syncCoordinator'
 import { useAuth } from './useAuth'
@@ -318,6 +318,7 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       for (const item of overdue) {
         if (!item.dueAt) continue
         const nextDue = moveDueToToday(item.dueAt, now)
+        const isAllDay = isChoreAllDay(item)
 
         if (item.isSubtask && item.parentChoreId && item.subtaskId) {
           let subMap = parentSubtaskUpdates.get(item.parentChoreId)
@@ -329,6 +330,7 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
         } else {
           chorePatches.set(item.id, {
             dueAt: nextDue,
+            isAllDay,
             lastDuePushAt: null,
             lastPreduePushAt: null,
             lastOverduePushAt: null,
@@ -343,7 +345,9 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
           const parent = chores.find((c) => c.id === choreId)
           if (parent) {
             patch.subtasks = parent.subtasks.map((s) =>
-              subUpdates.has(s.id) ? { ...s, dueAt: subUpdates.get(s.id)! } : s,
+              subUpdates.has(s.id)
+                ? { ...s, dueAt: subUpdates.get(s.id)!, isAllDay: isChoreAllDay(s) }
+                : s,
             )
           }
           parentSubtaskUpdates.delete(choreId)
@@ -364,7 +368,9 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
         const parent = chores.find((c) => c.id === parentChoreId)
         if (parent) {
           const nextSubtasks = parent.subtasks.map((s) =>
-            subUpdates.has(s.id) ? { ...s, dueAt: subUpdates.get(s.id)! } : s,
+            subUpdates.has(s.id)
+              ? { ...s, dueAt: subUpdates.get(s.id)!, isAllDay: isChoreAllDay(s) }
+              : s,
           )
           runWrite(
             parentChoreId,

@@ -26,10 +26,9 @@ import {
   subMonths,
   addDays,
   subDays,
-  parseISO
 } from 'date-fns'
 import type { Chore, Label } from '../types/models'
-import { byDue } from '../lib/scheduler'
+import { byDue, parseChoreDue, isChoreAllDay } from '../lib/scheduler'
 import { useProjects } from '../hooks/useProjects'
 import { ChoreRow } from './ChoreRow'
 import { ChevronLeft, ChevronRight, Plus } from './icons'
@@ -189,7 +188,9 @@ export function CalendarView({
     const map = new Map<string, Chore[]>()
     for (const c of chores) {
       if (!c.dueAt) continue
-      const dateKey = format(parseISO(c.dueAt), 'yyyy-MM-dd')
+      const parsed = parseChoreDue(c.dueAt)
+      if (!parsed) continue
+      const dateKey = format(parsed, 'yyyy-MM-dd')
       if (!map.has(dateKey)) {
         map.set(dateKey, [])
       }
@@ -235,19 +236,20 @@ export function CalendarView({
       const chore = chores.find(c => c.id === choreId)
       if (!chore) return
       
-      if (chore.isAllDay) {
+      if (isChoreAllDay(chore)) {
         onUpdateTask(choreId, { dueAt: targetDate, isAllDay: true })
       } else if (chore.dueAt) {
-        const oldDue = parseISO(chore.dueAt)
-        const newDue = parseISO(targetDate)
-        newDue.setHours(oldDue.getHours(), oldDue.getMinutes(), oldDue.getSeconds(), 0)
-        onUpdateTask(choreId, { dueAt: newDue.toISOString(), isAllDay: false })
+        const oldDue = parseChoreDue(chore.dueAt)
+        const newDue = parseChoreDue(targetDate)
+        if (oldDue && newDue) {
+          newDue.setHours(oldDue.getHours(), oldDue.getMinutes(), oldDue.getSeconds(), 0)
+          onUpdateTask(choreId, { dueAt: newDue.toISOString(), isAllDay: false })
+        }
       } else {
-        const newDue = parseISO(targetDate)
-        newDue.setHours(12, 0, 0, 0)
-        onUpdateTask(choreId, { dueAt: newDue.toISOString() })
+        onUpdateTask(choreId, { dueAt: targetDate, isAllDay: true })
       }
-      setSelectedDate(parseISO(targetDate))
+      const sel = parseChoreDue(targetDate)
+      if (sel) setSelectedDate(sel)
       setActiveTab('scheduled')
     }
   }

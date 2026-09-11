@@ -130,6 +130,7 @@ textarea {
 
 .modal-panel {
   animation: modal-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  overscroll-behavior: contain;
 }
 
 @keyframes modal-in {

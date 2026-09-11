@@ -289,14 +289,14 @@ npm run build
     - Hardened `CreateTaskModal`: `isAllDay` defaults to `true` when `dueAt` is midnight or unset; Due chip and Due pill display "Today" / "Tomorrow" cleanly; checklist subtask draft defaults to `isAllDay: true`.
     - Hardened `ChoreDetailPage` and `useChores`: preserved `isAllDay` across move-to-today mutations and checklist additions.
     - Fixed NLP typed date override when editing an activity with an existing date: In `CreateTaskModal`, `isAllDayOverride` was initialized to `isChoreAllDay(editing)` on open, which acted as an active manual override that blocked `parsed.isAllDay` when the user typed a new due date like "today" in the title. Initialized `isAllDayOverride` to `undefined` on modal open; prioritized `hasNlpDue` so live parsed NLP dates (`dueAt` and `isAllDay`) take precedence over stale existing activity dates; cleared `dueOverride` and `isAllDayOverride` whenever `onParsed` detects a due phrase; applied identical precedence to subtask draft and inline editing.
-- **2026-09-11:** Simplified Mobile Back Navigation & Consistent Edge Swipe:
+- **2026-09-11:** Simplified Mobile Back Navigation & CloseWatcher Integration:
   - **Removed Exit Guard Entirely:** Removed double-back exit guard, toast notifications ("Swipe back again to exit ZeoTask"), and history guard trapping. The app now allows clean, natural, simplified browser back navigation without interceptors fighting the history stack.
-  - **Closing Open Modals/Tasks/Drawers First:**
-    - Any active modal (`CreateTaskModal`, `EditSubtaskModal`, `EntityManageModal`, `DueDatePicker`, `SearchOverlay`, `Sidebar`) intercepts the back gesture via `useModalBack` and closes itself immediately without popping routes.
-    - Swiping back from subpages (`/chore/:id`, `/profile`, `/completed`) or filters (`/?project=...`, `/?label=...`) returns directly to the root task list.
-  - **Consistent Left vs Right Swipe Navigation (`overscroll-behavior-x: none`):**
-    - Mobile browsers (iOS Safari, Android Chrome) by default run a native horizontal page-slide animation on left-edge-to-right swipes, while right-edge swipes execute a clean back action. This caused an asymmetric "page shift" glitch on left swipes.
-    - Added `overscroll-behavior-x: none` and `overflow-x: clip` to `html`, `body`, and `#root` in `src/index.css`. This completely suppresses the browser's horizontal swipe-to-navigate canvas shifting while preserving full vertical scrolling and sticky header positioning (`overflow-x: clip` does not break `position: sticky`).
-    - Both left-edge and right-edge gestures now behave with identical, smooth consistency.
+  - **Solved Android Left-Edge "Page Shift" via `CloseWatcher` (`useModalBack.ts`):**
+    - **Root Cause (Identified from User Screenshots):** In Android 14+ / Chrome, swiping back from the left edge activates Chrome's "Predictive Back" visual transition. Because `useModalBack` previously used `window.history.pushState()`, Chrome treated the modal as a full-page navigation, taking a screenshot of the modal and translating it to the right to preview the underlying task list. Once the gesture committed, the modal unmounted and the task list snapped back to 0px, causing the asymmetric page shift.
+    - **The Fix:** Integrated the modern W3C/Chrome **CloseWatcher API** (`window.CloseWatcher`). On modern Android Chrome (126+), opening a modal registers a native `CloseWatcher` instance without pushing to `window.history`. When the user swipes back from *either* edge, Android fires `watcher.onclose` directly to close the modal in place without triggering Chrome's predictive back page-sliding preview. Screen stays 100% stable in both directions.
+    - Preserved `pushState`/`popstate` fallback for older browsers without `CloseWatcher` support.
+  - **Consistent Left vs Right Swipe Navigation (`src/index.css`):**
+    - Added `overscroll-behavior-x: none` and `overflow-x: clip` to `html`, `body`, and `#root`.
+    - Added `overscroll-behavior: contain` to `.modal-panel`.
   - **Drawer Transition Suppression (`Sidebar.tsx`):**
     - Retained `swipeCloseInProgress` from `useModalBack.ts` so `transition-none` is applied when closing the drawer via swipe gesture, preventing dual-animation conflict.

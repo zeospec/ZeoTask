@@ -39,12 +39,25 @@ function ensurePopStateListener() {
   })
 }
 
+interface CloseWatcherInstance {
+  requestClose: () => void
+  close: () => void
+  destroy: () => void
+  oncancel: ((event: Event) => void) | null
+  onclose: ((event: Event) => void) | null
+}
+
+declare global {
+  interface Window {
+    CloseWatcher?: new () => CloseWatcherInstance
+  }
+}
+
 /**
- * Synchronizes modal open/close state with browser history.
- * - Opening the modal pushes a history entry.
- * - Hardware Back / Swipe-back closes the top-most modal.
- * - Closing via UI ('X' button, backdrop, save) cleanly pops the modal entry from history.
- * - Supports arbitrary nesting (e.g. sub-picker inside a parent modal).
+ * Synchronizes modal open/close state with browser history and system back actions.
+ * - Uses native CloseWatcher API on modern Android Chrome (126+) to intercept back
+ *   gestures without pushing history entries, completely eliminating predictive back page shifts.
+ * - Falls back to History API (pushState/popstate) on browsers without CloseWatcher support.
  */
 export function useModalBack(
   isOpen: boolean,
@@ -58,31 +71,28 @@ export function useModalBack(
   const registeredIdRef = useRef<string | null>(null)
 
   useEffect(() => {
-    ensurePopStateListener()
-  }, [])
+    if (!isOpen) return
 
-  useEffect(() => {
-    if (!isOpen) {
-      // Modal closed
-      if (registeredIdRef.current) {
-        const idToRemove = registeredIdRef.current
-        registeredIdRef.current = null
-
-        const idx = modalStack.findIndex((m) => m.id === idToRemove)
-        if (idx !== -1) {
-          modalStack.splice(idx, 1)
-        }
-
-        // Only pop history if our modal entry is currently at the top of history
-        if (window.history.state?.modalId === idToRemove) {
-          isProgrammaticBack = true
-          window.history.back()
-        }
+    // Modern standard: CloseWatcher API (Chrome 126+ on Android)
+    // Intercepts the back swipe/button natively without modifying browser history,
+    // keeping the background completely stable and avoiding page-sliding transitions.
+    if (typeof window !== 'undefined' && window.CloseWatcher) {
+      const watcher = new window.CloseWatcher()
+      watcher.onclose = () => {
+        swipeCloseInProgress = true
+        onCloseRef.current()
+        setTimeout(() => {
+          swipeCloseInProgress = false
+        }, 100)
       }
-      return
+      return () => {
+        watcher.destroy()
+      }
     }
 
-    // Modal opened: register with stack and push history state
+    // Fallback for browsers without CloseWatcher (Safari / older engines)
+    ensurePopStateListener()
+
     const uniqueId = `${modalId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     registeredIdRef.current = uniqueId
 
@@ -99,7 +109,6 @@ export function useModalBack(
     window.history.pushState({ modalId: uniqueId }, '')
 
     return () => {
-      // Unmount cleanup
       if (registeredIdRef.current) {
         const idToRemove = registeredIdRef.current
         registeredIdRef.current = null

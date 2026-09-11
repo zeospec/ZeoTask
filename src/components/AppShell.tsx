@@ -352,13 +352,7 @@ export function AppShell() {
             <button
               type="button"
               className="focus-ring flex h-11 w-11 items-center justify-center rounded-[var(--radius-control)] text-[var(--muted)] hover:bg-[var(--quiet)] hover:text-[var(--ink)] -ml-2"
-              onClick={() => {
-                if (window.history.length > 1) {
-                  navigate(-1)
-                } else {
-                  navigate('/')
-                }
-              }}
+              onClick={() => navigate('/')}
               aria-label="Go back"
               title="Go back"
             >
@@ -679,11 +673,11 @@ export function AppShell() {
         onClose={() => setSidebarOpen(false)}
         activeProjectId={activeProjectId}
         onSelectProject={(id) => {
-          handleSelectProject(id, { clearLabel: true, replace: true })
+          handleSelectProject(id, { clearLabel: true })
         }}
         activeLabelId={activeLabelId}
         onSelectLabel={(id) => {
-          handleSelectLabel(id, { clearProject: true, replace: true })
+          handleSelectLabel(id, { clearProject: true })
         }}
       />
 

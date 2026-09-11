@@ -122,7 +122,6 @@ export function Sidebar({
               
               <NavLink
                 to="/completed"
-                replace
                 onClick={onClose}
                 className={({ isActive }) => `w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius-control)] text-sm font-medium transition-colors ${
                   isActive 

@@ -1,6 +1,10 @@
 import { useEffect, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared modal stack (used by the History API fallback path)
+// ─────────────────────────────────────────────────────────────────────────────
+
 interface ModalStackEntry {
   id: string
   close: () => void
@@ -39,6 +43,19 @@ function ensurePopStateListener() {
   })
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CloseWatcher singleton stack
+//
+// The W3C CloseWatcher spec allows at most ONE active watcher per browsing
+// context at a time. Creating a second one while a first is alive does NOT
+// give you two independent watchers — the second one consumes the first's
+// "back" slot.
+//
+// Solution: maintain our own stack of close callbacks. Only the topmost entry
+// is wired to a single live CloseWatcher. When modals open/close we rebuild
+// the single watcher to always target the current top of stack.
+// ─────────────────────────────────────────────────────────────────────────────
+
 interface CloseWatcherInstance {
   requestClose: () => void
   close: () => void
@@ -53,11 +70,57 @@ declare global {
   }
 }
 
+// Stack of { id, onClose } — topmost entry = most recently opened modal
+const cwStack: Array<{ id: string; onClose: () => void }> = []
+let cwInstance: CloseWatcherInstance | null = null
+
+function cwRefresh() {
+  // Destroy existing watcher
+  if (cwInstance) {
+    cwInstance.destroy()
+    cwInstance = null
+  }
+  // Recreate only if there are open modals and the API is available
+  if (cwStack.length > 0 && typeof window !== 'undefined' && window.CloseWatcher) {
+    cwInstance = new window.CloseWatcher()
+    cwInstance.onclose = () => {
+      // Target the topmost open modal
+      const top = cwStack[cwStack.length - 1]
+      if (top) {
+        swipeCloseInProgress = true
+        top.onClose()
+        setTimeout(() => {
+          swipeCloseInProgress = false
+        }, 100)
+      }
+    }
+  }
+}
+
+function cwPush(id: string, onClose: () => void) {
+  cwStack.push({ id, onClose })
+  cwRefresh()
+}
+
+function cwPop(id: string) {
+  const idx = cwStack.findLastIndex((e) => e.id === id)
+  if (idx !== -1) cwStack.splice(idx, 1)
+  cwRefresh()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public hook
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Synchronizes modal open/close state with browser history and system back actions.
- * - Uses native CloseWatcher API on modern Android Chrome (126+) to intercept back
- *   gestures without pushing history entries, completely eliminating predictive back page shifts.
- * - Falls back to History API (pushState/popstate) on browsers without CloseWatcher support.
+ * Synchronizes modal open/close state with browser back navigation.
+ *
+ * On Chrome 126+ (Android): uses the native CloseWatcher API with a singleton
+ * stack so nested modals each intercept exactly one back gesture — no history
+ * entries are pushed, eliminating the predictive-back page-shift glitch.
+ *
+ * On Safari / older browsers: falls back to the History API (pushState /
+ * popstate) with the same modal-stack semantics.
  */
 export function useModalBack(
   isOpen: boolean,
@@ -68,29 +131,24 @@ export function useModalBack(
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
 
+  // Stable unique ID for this instance across re-renders
+  const instanceId = useRef(`${modalId}-${Math.random().toString(36).slice(2, 8)}`)
+
   const registeredIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!isOpen) return
 
-    // Modern standard: CloseWatcher API (Chrome 126+ on Android)
-    // Intercepts the back swipe/button natively without modifying browser history,
-    // keeping the background completely stable and avoiding page-sliding transitions.
+    // ── Modern path: CloseWatcher API ──────────────────────────────────────
     if (typeof window !== 'undefined' && window.CloseWatcher) {
-      const watcher = new window.CloseWatcher()
-      watcher.onclose = () => {
-        swipeCloseInProgress = true
-        onCloseRef.current()
-        setTimeout(() => {
-          swipeCloseInProgress = false
-        }, 100)
-      }
+      const id = instanceId.current
+      cwPush(id, () => onCloseRef.current())
       return () => {
-        watcher.destroy()
+        cwPop(id)
       }
     }
 
-    // Fallback for browsers without CloseWatcher (Safari / older engines)
+    // ── Fallback path: History API ─────────────────────────────────────────
     ensurePopStateListener()
 
     const uniqueId = `${modalId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`

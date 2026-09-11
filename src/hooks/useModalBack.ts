@@ -12,17 +12,6 @@ let isProgrammaticBack = false
 let popStateListenerAttached = false
 export let swipeCloseInProgress = false
 
-export type PopStateInterceptor = (event: PopStateEvent) => boolean | void
-
-let exitGuardInterceptor: PopStateInterceptor | null = null
-
-export function setExitGuardInterceptor(fn: PopStateInterceptor | null) {
-  exitGuardInterceptor = fn
-  if (fn) {
-    ensurePopStateListener()
-  }
-}
-
 export function getModalStackDepth(): number {
   return modalStack.length
 }
@@ -31,7 +20,7 @@ function ensurePopStateListener() {
   if (typeof window === 'undefined' || popStateListenerAttached) return
   popStateListenerAttached = true
 
-  window.addEventListener('popstate', (event: PopStateEvent) => {
+  window.addEventListener('popstate', () => {
     if (isProgrammaticBack) {
       isProgrammaticBack = false
       return
@@ -46,11 +35,6 @@ function ensurePopStateListener() {
           swipeCloseInProgress = false
         }, 100)
       }
-      return
-    }
-
-    if (exitGuardInterceptor) {
-      exitGuardInterceptor(event)
     }
   })
 }

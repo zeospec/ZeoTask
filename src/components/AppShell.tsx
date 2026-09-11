@@ -11,7 +11,6 @@ import { useChores } from '../hooks/useChores'
 import { usePwa } from '../hooks/usePwa'
 import { useProjects } from '../hooks/useProjects'
 import { useLabels } from '../hooks/useLabels'
-import { usePwaExitGuard } from '../hooks/usePwaExitGuard'
 import { useClickOutside } from '../hooks/useClickOutside'
 import { notificationPermission, enablePushNotifications } from '../lib/push'
 import { Sidebar } from './Sidebar'
@@ -63,8 +62,7 @@ export type CreateOverrides = {
 
 export function AppShell() {
   const { user, logout } = useAuth()
-  const { syncing, pushToast } = useChores()
-  usePwaExitGuard({ pushToast })
+  const { syncing } = useChores()
   const { projects } = useProjects()
   const { labels } = useLabels()
   const [searchParams] = useSearchParams()

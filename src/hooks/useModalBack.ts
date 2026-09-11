@@ -10,6 +10,7 @@ interface ModalStackEntry {
 const modalStack: ModalStackEntry[] = []
 let isProgrammaticBack = false
 let popStateListenerAttached = false
+export let swipeCloseInProgress = false
 
 export type PopStateInterceptor = (event: PopStateEvent) => boolean | void
 
@@ -39,7 +40,11 @@ function ensurePopStateListener() {
     if (modalStack.length > 0) {
       const top = modalStack.pop()
       if (top) {
+        swipeCloseInProgress = true
         top.close()
+        setTimeout(() => {
+          swipeCloseInProgress = false
+        }, 100)
       }
       return
     }

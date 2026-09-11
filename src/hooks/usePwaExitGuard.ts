@@ -18,6 +18,10 @@ interface UsePwaExitGuardOptions {
  */
 export function usePwaExitGuard({ pushToast }: UsePwaExitGuardOptions) {
   const location = useLocation()
+  const currentPath = `${location.pathname}${location.search}`
+  const currentPathRef = useRef(currentPath)
+  currentPathRef.current = currentPath
+
   const lastBackRef = useRef<number>(0)
   const pushToastRef = useRef(pushToast)
   pushToastRef.current = pushToast
@@ -47,12 +51,24 @@ export function usePwaExitGuard({ pushToast }: UsePwaExitGuardOptions) {
     // Arm root guard on root screen if not already guarded and no modal is active
     if (isRoot && getModalStackDepth() === 0) {
       if (!window.history.state?.__pwaRootGuard) {
-        window.history.pushState({ __pwaRootGuard: true }, '', '/')
+        if (window.history.length <= 1) {
+          window.history.pushState({ __pwaRootGuard: true }, '', '/')
+        } else {
+          window.history.replaceState({ ...window.history.state, __pwaRootGuard: true }, '', '/')
+        }
       }
     }
 
     const onExitGuardPopState = (event: PopStateEvent) => {
-      // 1. If the entry we just landed on has __pwaRootGuard, we just returned to root from a subpage or filter.
+      // 1. If the user was on any subroute (/profile, /chore/:id, /completed) or filter (/?project=..., /?label=...),
+      // swiping back is an in-app navigation back to the previous screen. NEVER show exit toast!
+      const previousPath = currentPathRef.current
+      if (previousPath !== '/') {
+        lastBackRef.current = 0
+        return
+      }
+
+      // 2. If the entry we just landed on has __pwaRootGuard, we just returned to root.
       // Never show toast; reset timer.
       if (event.state?.__pwaRootGuard) {
         lastBackRef.current = 0
@@ -77,7 +93,7 @@ export function usePwaExitGuard({ pushToast }: UsePwaExitGuardOptions) {
 
       // First back attempt on root: keep user in app, re-arm guard, and show toast
       lastBackRef.current = now
-      window.history.pushState({ __pwaRootGuard: true }, '', '/')
+      window.history.pushState({ ...window.history.state, __pwaRootGuard: true }, '', '/')
       pushToastRef.current('Swipe back again to exit ZeoTask')
     }
 

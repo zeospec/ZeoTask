@@ -4,7 +4,7 @@ import { NavLink } from 'react-router-dom'
 import { useProjects } from '../hooks/useProjects'
 import { useLabels } from '../hooks/useLabels'
 import { EntityManageModal } from './EntityManageModal'
-import { useModalBack } from '../hooks/useModalBack'
+import { useModalBack, swipeCloseInProgress } from '../hooks/useModalBack'
 
 type SidebarProps = {
   open: boolean
@@ -90,7 +90,9 @@ export function Sidebar({
 
       {/* Drawer */}
       <div
-        className={`fixed inset-y-0 left-0 z-50 w-72 transform bg-[var(--surface)] shadow-[var(--shadow-card)] transition-transform duration-300 ease-out ${
+        className={`fixed inset-y-0 left-0 z-50 w-72 transform bg-[var(--surface)] shadow-[var(--shadow-card)] ${
+          swipeCloseInProgress ? 'transition-none' : 'transition-transform duration-200 ease-out'
+        } ${
           open ? 'translate-x-0 pointer-events-auto' : '-translate-x-full pointer-events-none'
         }`}
       >

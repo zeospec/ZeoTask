@@ -318,7 +318,7 @@ export function AppShell() {
       const next = new URLSearchParams(location.search)
       next.delete('label')
       const search = next.toString()
-      navigate(search ? `/?${search}` : '/')
+      navigate(search ? `/?${search}` : '/', { replace: true })
     }
   }
 

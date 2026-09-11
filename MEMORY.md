@@ -289,3 +289,15 @@ npm run build
     - Hardened `CreateTaskModal`: `isAllDay` defaults to `true` when `dueAt` is midnight or unset; Due chip and Due pill display "Today" / "Tomorrow" cleanly; checklist subtask draft defaults to `isAllDay: true`.
     - Hardened `ChoreDetailPage` and `useChores`: preserved `isAllDay` across move-to-today mutations and checklist additions.
     - Fixed NLP typed date override when editing an activity with an existing date: In `CreateTaskModal`, `isAllDayOverride` was initialized to `isChoreAllDay(editing)` on open, which acted as an active manual override that blocked `parsed.isAllDay` when the user typed a new due date like "today" in the title. Initialized `isAllDayOverride` to `undefined` on modal open; prioritized `hasNlpDue` so live parsed NLP dates (`dueAt` and `isAllDay`) take precedence over stale existing activity dates; cleared `dueOverride` and `isAllDayOverride` whenever `onParsed` detects a due phrase; applied identical precedence to subtask draft and inline editing.
+- **2026-09-11:** Smooth Mobile Back Navigation & Strict Root Exit Guard:
+  - **Swipe-Back Animation Conflict (Left-Edge vs Right-Edge Double-Slide):**
+    - The Sidebar drawer had `transition-transform duration-300 ease-out`. When user swiped back to close the drawer, the browser's native gesture slide and the CSS transition fought each other, producing a jarring "page changing" visual.
+    - Added `export let swipeCloseInProgress = false` in `useModalBack.ts`, toggled to `true` during popstate modal closing for 100ms.
+    - In `Sidebar.tsx`, applied `${swipeCloseInProgress ? 'transition-none' : 'transition-transform duration-200 ease-out'}`. This instantly snaps the drawer off-screen during swipe-back while keeping smooth 200ms transitions for normal tap/backdrop closures.
+  - **Precision Root Exit Guard (`usePwaExitGuard.ts`):**
+    - Previously, when returning from `/profile`, `/chore/:id`, or `/?project=...` to `/`, `event.state?.__pwaRootGuard` was sometimes missing (wiped out by React Router's internal navigation state). Because `window.location.pathname` was already `'/'`, the guard mistakenly assumed the user was swiping off root and triggered the premature "Swipe back again to exit ZeoTask" toast.
+    - Solved by tracking `currentPathRef` (the route before popstate fires).
+    - If `previousPath !== '/'`, the user was navigating back from a subroute or filter—the toast is strictly suppressed.
+    - The exit guard toast triggers *exclusively* when the user initiates a back swipe while ALREADY sitting on the bare root home screen (`'/'`) with zero modals open.
+    - Used `replaceState` for guard re-arming when `window.history.length > 1` to prevent stacking duplicate entries.
+    - Added `{ replace: true }` in `AppShell.tsx` `handleFilterChange` when clearing label filters.

@@ -22,11 +22,7 @@ export function usePwaExitGuard({ pushToast }: UsePwaExitGuardOptions) {
   const pushToastRef = useRef(pushToast)
   pushToastRef.current = pushToast
 
-  // Keeps track of the active path before any popstate event occurs
-  const currentPathRef = useRef<string>(location.pathname + location.search)
-
   useEffect(() => {
-    currentPathRef.current = location.pathname + location.search
     // Reset double-back timer on route transitions
     lastBackRef.current = 0
   }, [location.pathname, location.search])
@@ -51,33 +47,26 @@ export function usePwaExitGuard({ pushToast }: UsePwaExitGuardOptions) {
     // Arm root guard on root screen if not already guarded and no modal is active
     if (isRoot && getModalStackDepth() === 0) {
       if (!window.history.state?.__pwaRootGuard) {
-        window.history.pushState({ __pwaRootGuard: true }, '')
+        window.history.pushState({ __pwaRootGuard: true }, '', '/')
       }
     }
 
-    const onExitGuardPopState = (_event: PopStateEvent) => {
-      const fromPath = currentPathRef.current
-      const toPath = window.location.pathname + window.location.search
-
-      // If user came back from a subroute (e.g. /chore/:id, /profile, /completed, /?project=...),
-      // this back gesture was to return to home, NOT to exit the app.
-      if (fromPath !== '/') {
-        currentPathRef.current = toPath
-        lastBackRef.current = 0
-        if (toPath === '/' && !window.history.state?.__pwaRootGuard) {
-          window.history.pushState({ __pwaRootGuard: true }, '')
-        }
-        return
-      }
-
-      // If current target location is not root, don't guard exit
-      if (toPath !== '/') {
-        currentPathRef.current = toPath
+    const onExitGuardPopState = (event: PopStateEvent) => {
+      // 1. If the entry we just landed on has __pwaRootGuard, we just returned to root from a subpage or filter.
+      // Never show toast; reset timer.
+      if (event.state?.__pwaRootGuard) {
         lastBackRef.current = 0
         return
       }
 
-      // The user was ALREADY sitting on the root home screen ('/') and pressed/swiped back
+      // 2. We only guard exit if the current destination is the bare root home screen
+      const onRoot = window.location.pathname === '/' && !window.location.search
+      if (!onRoot) {
+        lastBackRef.current = 0
+        return
+      }
+
+      // 3. The user was on the guarded root and just popped off it
       const now = Date.now()
       if (now - lastBackRef.current < 2000) {
         // Double-back detected within 2 seconds: allow app exit by navigating back past base
@@ -88,7 +77,7 @@ export function usePwaExitGuard({ pushToast }: UsePwaExitGuardOptions) {
 
       // First back attempt on root: keep user in app, re-arm guard, and show toast
       lastBackRef.current = now
-      window.history.pushState({ __pwaRootGuard: true }, '')
+      window.history.pushState({ __pwaRootGuard: true }, '', '/')
       pushToastRef.current('Swipe back again to exit ZeoTask')
     }
 

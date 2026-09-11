@@ -250,9 +250,11 @@ npm run build
     - If `isProgrammaticBack` is active (modal closed via UI 'X', backdrop click, or Save/Cancel), the event is swallowed cleanly.
     - If `modalStack.length > 0` (user swiped back to close an open modal, sheet, or picker), `top.close()` is called and the event is consumed immediately—the exit guard is NEVER called.
     - Only when `modalStack.length === 0` and `isProgrammaticBack === false` does the centralized `exitGuardInterceptor` run.
-  - **Origin-Aware Route Detection (`usePwaExitGuard.ts`):**
-    - Tracks `currentPathRef` across route transitions. When user swipes back from `/chore/:id`, `/profile`, `/completed`, or `/?project=...` to `/`, the guard detects `fromPath !== '/'` and returns to All Tasks smoothly without triggering the exit toast.
-    - The double-back exit guard ("Swipe back again to exit ZeoTask") triggers exclusively when the user is already sitting on the bare root home screen (`/` with no modals, no sheets, and no filters) and swipes back. A second swipe back within 2 seconds cleanly exits/minimizes the app.
+  - **State-Based Exit Guard Detection (`usePwaExitGuard.ts`):**
+    - Instead of unstable React ref path tracking (which was desynchronizing when React Router updated location on popstate), the exit guard checks `event.state?.__pwaRootGuard` synchronously from the browser's PopStateEvent.
+    - When user navigates back from `/profile`, `/completed`, or `/?project=...` to All Tasks (`/`), the entry landed on is the guarded root entry (`event.state?.__pwaRootGuard === true`). The guard recognizes this as a clean return to the home screen and immediately returns without showing any toast.
+    - The double-back exit guard ("Swipe back again to exit ZeoTask") triggers exclusively when the user pops *off* the guarded root entry (`!event.state?.__pwaRootGuard`) onto the bare base entry on `/` with zero modals open.
+    - **Drawer History Transition in `Sidebar.tsx` & `AppShell.tsx`:** Selecting an entity (project, label, or completed) from the open Sidebar uses `{ replace: true }` to cleanly replace the drawer's modal history entry. This prevents orphaned drawer entries from being trapped under the filtered route, guaranteeing that 1 tap/swipe back from any project filter or subpage returns straight to All Tasks.
 
 
 

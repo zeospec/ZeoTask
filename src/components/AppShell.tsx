@@ -183,7 +183,7 @@ export function AppShell() {
     user?.displayName?.trim() || user?.email?.split('@')[0] || 'Account'
 
   const handleSelectProject = useCallback(
-    (id: string | null, options?: { clearLabel?: boolean }) => {
+    (id: string | null, options?: { clearLabel?: boolean; replace?: boolean }) => {
       const next = new URLSearchParams(location.search)
       if (id) {
         const found = projects.find((p) => p.id === id)
@@ -195,14 +195,14 @@ export function AppShell() {
       const search = next.toString()
       const target = search ? `/?${search}` : '/'
       if (`${location.pathname}${location.search}` !== target) {
-        navigate(target)
+        navigate(target, { replace: options?.replace })
       }
     },
     [location.pathname, location.search, navigate, projects],
   )
 
   const handleSelectLabel = useCallback(
-    (id: string | null, options?: { clearProject?: boolean }) => {
+    (id: string | null, options?: { clearProject?: boolean; replace?: boolean }) => {
       const next = new URLSearchParams(location.search)
       if (id) {
         const found = labels.find((l) => l.id === id)
@@ -214,7 +214,7 @@ export function AppShell() {
       const search = next.toString()
       const target = search ? `/?${search}` : '/'
       if (`${location.pathname}${location.search}` !== target) {
-        navigate(target)
+        navigate(target, { replace: options?.replace })
       }
     },
     [location.pathname, location.search, navigate, labels],
@@ -681,11 +681,11 @@ export function AppShell() {
         onClose={() => setSidebarOpen(false)}
         activeProjectId={activeProjectId}
         onSelectProject={(id) => {
-          handleSelectProject(id, { clearLabel: true })
+          handleSelectProject(id, { clearLabel: true, replace: true })
         }}
         activeLabelId={activeLabelId}
         onSelectLabel={(id) => {
-          handleSelectLabel(id, { clearProject: true })
+          handleSelectLabel(id, { clearProject: true, replace: true })
         }}
       />
 

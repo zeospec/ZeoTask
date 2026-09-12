@@ -1,5 +1,12 @@
 import { deleteToken, getToken } from 'firebase/messaging'
-import { deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore'
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  serverTimestamp,
+  setDoc,
+} from 'firebase/firestore'
 import { getDb, getFirebaseMessaging, getVapidKey } from './firebase'
 
 function tokenDocId(token: string) {
@@ -8,6 +15,17 @@ function tokenDocId(token: string) {
     hash = (hash * 31 + token.charCodeAt(i)) >>> 0
   }
   return `t${hash.toString(16)}`
+}
+
+export function getDeviceId(): string {
+  if (typeof window === 'undefined') return 'unknown'
+  const key = 'zeotask_device_id'
+  let id = localStorage.getItem(key)
+  if (!id) {
+    id = `d_${Math.random().toString(36).substring(2, 11)}_${Date.now().toString(36)}`
+    localStorage.setItem(key, id)
+  }
+  return id
 }
 
 export function notificationPermission(): NotificationPermission | 'unsupported' {
@@ -22,7 +40,7 @@ export function isStandaloneDisplay(): boolean {
   return window.matchMedia('(display-mode: standalone)').matches
 }
 
-/** Register FCM token and store under the user. */
+/** Register FCM token and store under the user with device deduplication. */
 export async function enablePushNotifications(uid: string): Promise<string> {
   const vapidKey = getVapidKey()
   if (!vapidKey) {
@@ -50,10 +68,16 @@ export async function enablePushNotifications(uid: string): Promise<string> {
   })
   if (!token) throw new Error('Could not get a push token.')
 
+  const deviceId = getDeviceId()
+  const isStandalone = isStandaloneDisplay()
+  const currentDocId = tokenDocId(token)
+
   await setDoc(
-    doc(getDb(), 'users', uid, 'pushTokens', tokenDocId(token)),
+    doc(getDb(), 'users', uid, 'pushTokens', currentDocId),
     {
       token,
+      deviceId,
+      isStandalone,
       userAgent: navigator.userAgent,
       updatedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
@@ -67,7 +91,79 @@ export async function enablePushNotifications(uid: string): Promise<string> {
     { merge: true },
   )
 
+  // Prune any previous/obsolete tokens for this device or replaced browser tokens
+  try {
+    const snap = await getDocs(collection(getDb(), 'users', uid, 'pushTokens'))
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+
+    for (const d of snap.docs) {
+      if (d.id === currentDocId) continue
+      const data = d.data()
+      // Same deviceId -> delete older token
+      if (data.deviceId === deviceId || (isStandalone && isMobile && !data.isStandalone)) {
+        await deleteDoc(doc(getDb(), 'users', uid, 'pushTokens', d.id)).catch(() => {})
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to prune previous push tokens', err)
+  }
+
   return token
+}
+
+/**
+ * Automatically reconciles and syncs push token when the app opens.
+ * If running in standalone PWA mode and notifications are granted, ensures the PWA
+ * token is registered and any older duplicate browser token on this device is purged.
+ */
+export async function syncPushTokens(uid: string): Promise<void> {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+    return
+  }
+  const vapidKey = getVapidKey()
+  if (!vapidKey) return
+
+  try {
+    const messaging = await getFirebaseMessaging()
+    if (!messaging) return
+    const registration = await navigator.serviceWorker.ready
+    const token = await getToken(messaging, {
+      vapidKey,
+      serviceWorkerRegistration: registration,
+    })
+    if (!token) return
+
+    const deviceId = getDeviceId()
+    const isStandalone = isStandaloneDisplay()
+    const currentDocId = tokenDocId(token)
+
+    await setDoc(
+      doc(getDb(), 'users', uid, 'pushTokens', currentDocId),
+      {
+        token,
+        deviceId,
+        isStandalone,
+        userAgent: navigator.userAgent,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    )
+
+    // Clean up duplicate/stale tokens for this device in Firestore
+    const snap = await getDocs(collection(getDb(), 'users', uid, 'pushTokens'))
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+
+    for (const d of snap.docs) {
+      if (d.id === currentDocId) continue
+      const data = d.data()
+      if (data.deviceId === deviceId || (isStandalone && isMobile && !data.isStandalone)) {
+        await deleteDoc(doc(getDb(), 'users', uid, 'pushTokens', d.id)).catch(() => {})
+      }
+    }
+  } catch (err) {
+    // Non-blocking sync
+    console.warn('Failed to sync push tokens', err)
+  }
 }
 
 export async function disablePushNotifications(uid: string): Promise<void> {

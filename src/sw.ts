@@ -49,22 +49,48 @@ const firebaseConfig = {
 initializeApp(firebaseConfig)
 const messaging = getMessaging()
 
-onBackgroundMessage(messaging, (payload) => {
-  const title = payload.notification?.title || payload.data?.title || 'ZeoTask'
-  const body = payload.notification?.body || payload.data?.body || ''
+onBackgroundMessage(messaging, async (payload) => {
+  // If the push message already includes a notification payload, Firebase Messaging SDK's
+  // internal SW listener displays it automatically. Calling showNotification here
+  // causes a duplicate notification (one from Firebase/browser, one from this callback).
+  if (payload.notification) {
+    return
+  }
+
+  // Check if an existing window client is already visible and focused.
+  // Suppress background notification if user is actively in the app.
+  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+  const hasFocusedWindow = clients.some((c) => 'focused' in c && (c as WindowClient).focused)
+  if (hasFocusedWindow) {
+    return
+  }
+
+  const title = payload.data?.title || 'ZeoTask'
+  const body = payload.data?.body || ''
+  const tag =
+    payload.data?.tag ||
+    (payload.data?.choreId ? `chore-${payload.data.choreId}` : 'zeotask-notification')
   const data = payload.data || {}
-  void self.registration.showNotification(title, {
+
+  await self.registration.showNotification(title, {
     body,
     icon: '/pwa-192.png',
     badge: '/pwa-192.png',
+    tag,
     data,
   })
 })
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const data = (event.notification.data || {}) as { choreId?: string }
-  const path = data.choreId ? `/chore/${data.choreId}` : '/'
+  const data = (event.notification.data || {}) as { choreId?: string; fcmOptions?: { link?: string } }
+  let path = '/'
+  if (data.choreId) {
+    path = `/chore/${data.choreId}`
+  } else if (data.fcmOptions?.link) {
+    path = data.fcmOptions.link
+  }
+
   event.waitUntil(
     self.clients
       .matchAll({ type: 'window', includeUncontrolled: true })

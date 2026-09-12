@@ -60,20 +60,131 @@ function computeNextReminderAt(chore, now, settings) {
 }
 async function getTokensForUser(db, uid) {
     const snap = await db.collection(`users/${uid}/pushTokens`).get();
-    return snap.docs
-        .map((d) => ({ docId: d.id, token: d.data().token }))
+    const rawRecords = snap.docs
+        .map((d) => {
+        const data = d.data();
+        return {
+            docId: d.id,
+            token: data.token ?? '',
+            deviceId: data.deviceId,
+            isStandalone: Boolean(data.isStandalone),
+            userAgent: data.userAgent,
+            updatedAt: data.updatedAt,
+            createdAt: data.createdAt,
+        };
+    })
         .filter((t) => Boolean(t.token));
+    if (rawRecords.length <= 1) {
+        return rawRecords;
+    }
+    // Deduplicate and prune obsolete or duplicate tokens
+    const pruneDocIds = [];
+    // 1. If duplicate identical tokens exist across docs, keep only one
+    const seenTokens = new Set();
+    const uniqueTokenRecords = [];
+    for (const rec of rawRecords) {
+        if (seenTokens.has(rec.token)) {
+            pruneDocIds.push(rec.docId);
+        }
+        else {
+            seenTokens.add(rec.token);
+            uniqueTokenRecords.push(rec);
+        }
+    }
+    // 2. Group by device: prefer deviceId if present, fallback to normalized userAgent
+    const getGroupKey = (r) => {
+        if (r.deviceId)
+            return `dev:${r.deviceId}`;
+        if (r.userAgent) {
+            // Normalize mobile userAgent to group browser and PWA on same device
+            const isMobile = /Android|iPhone|iPad|iPod/i.test(r.userAgent);
+            if (isMobile) {
+                const cleanUa = r.userAgent.replace(/\s*(Version|Chrome)\/[\d.]+/g, '').trim();
+                return `ua:${cleanUa}`;
+            }
+            return `ua:${r.userAgent}`;
+        }
+        return `tok:${r.docId}`;
+    };
+    const groups = new Map();
+    for (const rec of uniqueTokenRecords) {
+        const key = getGroupKey(rec);
+        const list = groups.get(key) || [];
+        list.push(rec);
+        groups.set(key, list);
+    }
+    const survivingRecords = [];
+    for (const [, group] of groups) {
+        if (group.length === 1) {
+            survivingRecords.push(group[0]);
+            continue;
+        }
+        // Multiple tokens for the same physical device.
+        // If one is standalone PWA and others are browser, ALWAYS prefer the standalone PWA!
+        const standaloneTokens = group.filter((r) => r.isStandalone);
+        const candidates = standaloneTokens.length > 0 ? standaloneTokens : group;
+        // Pick the most recent candidate
+        const getTimestamp = (r) => {
+            const val = r.updatedAt ?? r.createdAt;
+            if (!val)
+                return 0;
+            if (typeof val === 'number')
+                return val;
+            if (typeof val === 'string') {
+                const p = Date.parse(val);
+                return isNaN(p) ? 0 : p;
+            }
+            if (typeof val.toMillis === 'function') {
+                return val.toMillis();
+            }
+            return 0;
+        };
+        candidates.sort((a, b) => getTimestamp(b) - getTimestamp(a));
+        const winner = candidates[0];
+        survivingRecords.push(winner);
+        // Mark all losers in this group for pruning
+        for (const rec of group) {
+            if (rec.docId !== winner.docId) {
+                pruneDocIds.push(rec.docId);
+            }
+        }
+    }
+    // Prune obsolete token documents from Firestore in background batch
+    if (pruneDocIds.length > 0) {
+        firebase_functions_1.logger.info('Pruning duplicate/stale push tokens from Firestore', {
+            uid,
+            count: pruneDocIds.length,
+            pruned: pruneDocIds,
+        });
+        const batch = db.batch();
+        for (const docId of pruneDocIds) {
+            batch.delete(db.doc(`users/${uid}/pushTokens/${docId}`));
+        }
+        await batch.commit().catch((err) => firebase_functions_1.logger.warn('Failed pruning duplicate tokens', err));
+    }
+    return survivingRecords;
 }
 async function sendToUserWithCleanup(db, uid, tokenRecords, title, body, data) {
     if (tokenRecords.length === 0)
         return;
     const tokens = tokenRecords.map((t) => t.token);
+    const tag = data.choreId
+        ? `chore-${data.choreId}-${data.type || 'reminder'}`
+        : `zeotask-${data.type || 'reminder'}`;
+    const link = data.choreId ? `/chore/${data.choreId}` : '/';
     const res = await (0, messaging_1.getMessaging)().sendEachForMulticast({
         tokens,
         notification: { title, body },
-        data: { title, body, ...data },
+        data: { title, body, tag, ...data },
         webpush: {
-            fcmOptions: { link: data.choreId ? `/chore/${data.choreId}` : '/' },
+            notification: {
+                title,
+                body,
+                icon: '/pwa-192.png',
+                badge: '/pwa-192.png',
+                tag,
+            },
+            fcmOptions: { link },
         },
     });
     firebase_functions_1.logger.info('Notification sent', {

@@ -12,7 +12,7 @@ import { usePwa } from '../hooks/usePwa'
 import { useProjects } from '../hooks/useProjects'
 import { useLabels } from '../hooks/useLabels'
 import { useClickOutside } from '../hooks/useClickOutside'
-import { notificationPermission, enablePushNotifications } from '../lib/push'
+import { notificationPermission, enablePushNotifications, syncPushTokens } from '../lib/push'
 import { Sidebar } from './Sidebar'
 import { InlineQuickAdd } from './InlineQuickAdd'
 import type { Chore } from '../types/models'
@@ -138,6 +138,12 @@ export function AppShell() {
       setPushBusy(false)
     }
   }
+
+  // Automatically sync push tokens on mount / auth change if already granted (e.g. installed PWA)
+  useEffect(() => {
+    if (!user || pushPerm !== 'granted') return
+    void syncPushTokens(user.uid)
+  }, [user, pushPerm])
   
   type ViewMode = 'agenda' | 'month' | 'week'
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
